@@ -72,6 +72,31 @@ export const useProfileStore = create<ProfileState>()(
 
 let _profileSyncTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * IMMEDIATELY save profile to Firestore (no debounce).
+ * Used on form submit to guarantee the profile is persisted.
+ */
+export async function saveProfileToFirestore(profile: any): Promise<boolean> {
+  const token = localStorage.getItem('aidraft_auth_token')
+  if (!token) return false
+  try {
+    const res = await fetch('/api/user-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ action: 'saveProfile', profile }),
+    })
+    if (!res.ok) {
+      console.error('[profile-store] Immediate save failed:', res.status)
+      return false
+    }
+    console.log('[profile-store] Profile saved to Firestore immediately')
+    return true
+  } catch (err) {
+    console.error('[profile-store] Immediate save error:', err)
+    return false
+  }
+}
+
 function debouncedProfileSync(profile: any): void {
   if (_profileSyncTimer) clearTimeout(_profileSyncTimer)
   _profileSyncTimer = setTimeout(async () => {

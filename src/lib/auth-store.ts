@@ -64,6 +64,12 @@ async function loadUserDataAfterAuth(): Promise<void> {
   const { useAppStore } = await import('@/store/app-store')
   useAppStore.getState().setDataLoaded(false)
 
+  // CRITICAL FIX: Register beforeunload/visibilitychange handlers to flush
+  // pending Firestore syncs when the user closes the tab or switches away.
+  // This prevents data loss — the root cause of cross-browser inconsistency.
+  const { setupSyncOnUnload } = await import('@/store/app-store')
+  setupSyncOnUnload()
+
   // Safety timeout: if all loads take more than 8s, force dataLoaded=true
   const safetyTimer = setTimeout(() => {
     if (!useAppStore.getState().dataLoaded) {

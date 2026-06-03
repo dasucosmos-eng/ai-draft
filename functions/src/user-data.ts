@@ -55,7 +55,14 @@ interface UserCase {
 
 async function verifyUid(req: Request): Promise<string | null> {
   const JWT_SECRET = process.env.JWT_SECRET || "aidraft-auth-secret-2026";
-  const token = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+  // Support three token sources:
+  // 1. Authorization header (standard)
+  // 2. req.body.token (explicit body field)
+  // 3. req.body._token (fallback for sendBeacon which can't set headers)
+  const token =
+    (req.headers.authorization || "").replace("Bearer ", "") ||
+    req.body?.token ||
+    req.body?._token;
   if (!token) return null;
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { uid?: string };

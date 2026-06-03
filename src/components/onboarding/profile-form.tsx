@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useProfileStore } from '@/store/profile-store'
+import { useProfileStore, saveProfileToFirestore } from '@/store/profile-store'
 import { useAuthStore } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 import {
@@ -167,6 +167,12 @@ export function ProfileForm() {
         completedAt: new Date().toISOString(),
       }
       setProfile(profileData)
+
+      // CRITICAL: Immediately save profile to Firestore (not debounced)
+      // This ensures the profile persists across browsers and sessions.
+      // Without this, if the user closes the browser within 1.5s,
+      // the profile only exists in localStorage of this browser.
+      await saveProfileToFirestore(profileData)
 
       // Fire CRM sync
       const user = useAuthStore.getState().user

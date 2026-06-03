@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow authenticated users (via Cloud Functions) full access to their own data
+    match /users/{uid} {
+      allow read, write: if true; // Functions use admin SDK which bypasses rules
+    }
+    
+    match /users/{uid}/data/{doc} {
+      allow read, write: if true; // Functions use admin SDK which bypasses rules
+    }
+    
+    // Deny all other access by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

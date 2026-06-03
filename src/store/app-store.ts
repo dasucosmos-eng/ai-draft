@@ -601,7 +601,25 @@ function sanitizeInvoices(invoices: any[]): InvoiceItem[] {
 let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let _syncInProgress = false
 
-export async function syncToFirestore(): Promise<boolean> {
+/**
+ * Merge two arrays by ID — remote is source of truth, local-only items are preserved.
+ * Firestore items take precedence; local items not in Firestore are kept (they may
+ * not have synced yet from this browser).
+ */
+function mergeById<T extends { id: string }>(remote: T[], local: T[]): T[] {
+  const remoteIds = new Set(remote.map(item => item.id))
+  // Start with all remote items (source of truth)
+  const merged = [...remote]
+  // Add local items NOT in remote (unsynced local data)
+  for (const localItem of local) {
+    if (!remoteIds.has(localItem.id)) {
+      merged.push(localItem)
+    }
+  }
+  return merged
+}
+
+export async function syncToFirestore(retryCount = 0): Promise<boolean> {
   const token = localStorage.getItem('aidraft_auth_token')
   if (!token || _syncInProgress) return false
 
@@ -623,14 +641,28 @@ export async function syncToFirestore(): Promise<boolean> {
     if (!res.ok) {
       console.error('[app-store] Sync HTTP error:', res.status)
       _syncInProgress = false
+      // Retry up to 3 times on server errors (5xx) with exponential backoff
+      if (res.status >= 500 && retryCount < 3) {
+        const delay = Math.pow(2, retryCount) * 1000
+        console.warn(`[app-store] Retrying sync in ${delay}ms (attempt ${retryCount + 1}/3)`)
+        await new Promise(r => setTimeout(r, delay))
+        return syncToFirestore(retryCount + 1)
+      }
       return false
     }
-    console.log('[app-store] Synced to Firestore')
+    console.log('[app-store] Synced to Firestore successfully')
     _syncInProgress = false
     return true
   } catch (err) {
     console.error('[app-store] Sync error:', err)
     _syncInProgress = false
+    // Retry up to 3 times on network errors with exponential backoff
+    if (retryCount < 3) {
+      const delay = Math.pow(2, retryCount) * 1000
+      console.warn(`[app-store] Retrying sync in ${delay}ms (attempt ${retryCount + 1}/3)`)
+      await new Promise(r => setTimeout(r, delay))
+      return syncToFirestore(retryCount + 1)
+    }
     return false
   }
 }
@@ -640,13 +672,68 @@ function debouncedSync(): void {
   _syncDebounceTimer = setTimeout(syncToFirestore, 2000)
 }
 
-/** Flush pending sync immediately — call before logout */
+/** Flush pending sync immediately — call before logout or page unload */
 export async function flushSyncToFirestore(): Promise<void> {
   if (_syncDebounceTimer) {
     clearTimeout(_syncDebounceTimer)
     _syncDebounceTimer = null
   }
   await syncToFirestore()
+}
+
+/**
+ * CRITICAL FIX: Register a beforeunload handler to flush pending syncs
+ * when the user closes the tab/browser or navigates away.
+ * Without this, debounced syncs (2s delay) are LOST if the browser closes
+ * before the timer fires. This is the ROOT CAUSE of data not appearing on
+ * other browsers — data was only in localStorage, never reached Firestore.
+ */
+let _unloadRegistered = false
+
+export function setupSyncOnUnload(): void {
+  if (_unloadRegistered || typeof window === 'undefined') return
+  _unloadRegistered = true
+
+  // Use sendBeacon for reliable sync during page unload.
+  // Unlike fetch(), sendBeacon guarantees the request is sent even if the page
+  // is closing. However, it doesn't support Authorization headers well,
+  // so we use a synchronous approach for the beforeunload event.
+  const handler = (e: BeforeUnloadEvent) => {
+    if (_syncDebounceTimer) {
+      // There's a pending debounced sync — try to flush it
+      clearTimeout(_syncDebounceTimer)
+      _syncDebounceTimer = null
+      // Use sendBeacon for the sync (fire-and-forget, no Authorization header issue
+      // since we include token in the body)
+      const token = localStorage.getItem('aidraft_auth_token')
+      if (token) {
+        const state = useAppStore.getState()
+        const body = JSON.stringify({
+          action: 'save',
+          cases: state.cases,
+          documents: state.documents,
+          tasks: state.tasks,
+          timelineEvents: state.timelineEvents,
+          invoices: state.invoices,
+          _token: token, // Include token in body for sendBeacon
+        })
+        navigator.sendBeacon('/api/user-data', body)
+      }
+    }
+  }
+
+  window.addEventListener('beforeunload', handler)
+
+  // Also use visibilitychange to sync when tab becomes hidden (e.g., mobile switch)
+  const visibilityHandler = () => {
+    if (document.visibilityState === 'hidden' && _syncDebounceTimer) {
+      clearTimeout(_syncDebounceTimer)
+      _syncDebounceTimer = null
+      syncToFirestore().catch(() => {})
+    }
+  }
+
+  document.addEventListener('visibilitychange', visibilityHandler)
 }
 
 export async function loadFromFirestore(retryCount = 0): Promise<void> {
