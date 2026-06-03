@@ -135,37 +135,36 @@ export async function loadProfileFromFirestore(): Promise<ProfileData | null> {
     })
     if (!res.ok) {
       console.error('[profile-store] Firestore load HTTP error:', res.status)
-      // Don't retry — just proceed with whatever we have
       store.setFirestoreStatus('loaded')
       return store.profile
     }
     const data = await res.json()
     if (data.success && data.data?.profile) {
       const remote = data.data.profile
-      if (remote.isComplete) {
-        // Remote has complete profile — use it (source of truth)
+      const local = store.profile
+
+      // CRITICAL: Only overwrite local profile if local is empty/default.
+      // If the user has already filled profile (in this session or previous),
+      // the local data is authoritative. Firestore data is stale or equal.
+      // This prevents: user edits name → Firestore loads old name → name reverts.
+      if (remote.isComplete && !local.isComplete) {
+        // Local is empty, remote has data — use remote
         store.setProfile(remote)
-        console.log('[profile-store] Loaded complete profile from Firestore')
-      } else if (!store.profile.isComplete && remote.fullName) {
-        // Remote has partial profile, local has none — use remote
+        console.log('[profile-store] Loaded complete profile from Firestore (local was empty)')
+      } else if (!local.isComplete && !local.fullName && remote.fullName) {
+        // Local has no name, remote has partial data — use remote
         store.setProfile(remote)
-      } else if (store.profile.isComplete && !remote.isComplete) {
+        console.log('[profile-store] Loaded partial profile from Firestore')
+      } else if (local.isComplete && !remote.isComplete) {
         // LOCAL has complete profile but Firestore doesn't — PUSH IT UP
         console.log('[profile-store] Local profile complete but Firestore empty — uploading migration')
-        await fetch('/api/user-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ action: 'saveProfile', profile: store.profile }),
-        })
+        await saveProfileToFirestore(local)
       }
+      // else: both have data — keep local (user's current session data wins)
     } else if (store.profile.isComplete) {
       // Firestore has NO profile at all, but local does — push migration
       console.log('[profile-store] No Firestore profile — uploading local as migration')
-      await fetch('/api/user-data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ action: 'saveProfile', profile: store.profile }),
-      })
+      await saveProfileToFirestore(store.profile)
     }
   } catch (err) {
     console.error('[profile-store] Firestore load error:', err)

@@ -51,18 +51,32 @@ export default function SettingsView() {
   const [darkMode, setDarkMode] = useState(true)
   const [compactMode, setCompactMode] = useState(false)
 
+  // Local form state — initialized from profile store, NOT live-bound.
+  // This prevents Firestore loads from overwriting user edits mid-typing.
+  const [formData, setFormData] = useState({
+    fullName: profile.fullName || user?.displayName || '',
+    email: profile.email || user?.email || '',
+    phone: profile.phone || user?.phoneNumber || '',
+    barCouncilNumber: profile.barCouncilNumber || '',
+    firmName: profile.firmName || '',
+    city: profile.city || '',
+  })
+
   const handleSave = () => {
+    // Push local form data to store (which syncs to Firestore)
+    setProfile({
+      fullName: formData.fullName,
+      email: formData.email,
+      phone: formData.phone,
+      barCouncilNumber: formData.barCouncilNumber,
+      firmName: formData.firmName,
+      city: formData.city,
+      isComplete: profile.isComplete,
+      completedAt: profile.completedAt,
+    })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
-
-  // Derive values from profile store (with fallbacks)
-  const lawyerName = profile.fullName || user?.displayName || ''
-  const email = profile.email || user?.email || ''
-  const phone = profile.phone || user?.phoneNumber || ''
-  const barNumber = profile.barCouncilNumber || ''
-  const firmName = profile.firmName || ''
-  const address = profile.city || ''
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
@@ -144,8 +158,8 @@ export default function SettingsView() {
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
                     <Input
-                      value={lawyerName}
-                      onChange={(e) => setProfile({ fullName: e.target.value })}
+                      value={formData.fullName}
+                      onChange={(e) => setFormData(prev => ({ ...prev, fullName: e.target.value }))}
                       className="pl-9 bg-background"
                       placeholder="Adv. Rajesh Kumar"
                     />
@@ -156,8 +170,8 @@ export default function SettingsView() {
                   <div className="relative">
                     <Key className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
                     <Input
-                      value={barNumber}
-                      onChange={(e) => setProfile({ barCouncilNumber: e.target.value })}
+                      value={formData.barCouncilNumber}
+                      onChange={(e) => setFormData(prev => ({ ...prev, barCouncilNumber: e.target.value }))}
                       className="pl-9 bg-background"
                       placeholder="BCI/1234/2015"
                     />
@@ -168,8 +182,8 @@ export default function SettingsView() {
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
                     <Input
-                      value={email}
-                      onChange={(e) => setProfile({ email: e.target.value })}
+                      value={formData.email}
+                      onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                       type="email"
                       className="pl-9 bg-background"
                       placeholder="rajesh@example.com"
@@ -181,8 +195,8 @@ export default function SettingsView() {
                   <div className="relative">
                     <Phone className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
                     <Input
-                      value={phone}
-                      onChange={(e) => setProfile({ phone: e.target.value })}
+                      value={formData.phone}
+                      onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
                       className="pl-9 bg-background"
                       placeholder="+91 98765 43210"
                     />
@@ -193,8 +207,8 @@ export default function SettingsView() {
                   <div className="relative">
                     <MapPin className="absolute left-3 top-3 size-4 text-muted-foreground" />
                     <Input
-                      value={address}
-                      onChange={(e) => setProfile({ city: e.target.value })}
+                      value={formData.city}
+                      onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
                       className="pl-9 bg-background"
                       placeholder="New Delhi"
                     />
@@ -216,8 +230,8 @@ export default function SettingsView() {
                 <div className="space-y-2">
                   <Label className="text-xs text-muted-foreground">Firm Name</Label>
                   <Input
-                    value={firmName}
-                    onChange={(e) => setProfile({ firmName: e.target.value })}
+                    value={formData.firmName}
+                    onChange={(e) => setFormData(prev => ({ ...prev, firmName: e.target.value }))}
                     className="bg-background"
                     placeholder="Kumar & Associates"
                   />
