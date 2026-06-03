@@ -39,3 +39,25 @@ Stage Summary:
 - Root cause: missing auto-analysis trigger — user expected upload→extract→analyze→auto-draft to be fully automatic
 - Fix: auto-trigger analysis 2s after file extraction completes
 - Full pipeline now: Upload → Extract text → Auto-analyze → Auto-draft documents → Create case+client → Navigate to case detail with PDF/Word download+view
+
+---
+Task ID: 1
+Agent: main
+Task: Fix PDF extraction 500 error in apiExtractFile cloud function
+
+Work Log:
+- Read Firestore rules: only allows user-scoped access, denies everything else. Cloud functions use Admin SDK so rules don't apply.
+- Read firebase.json rewrites: /api/ai-extract-file maps to apiExtractFile function
+- Read ai-extract-file.ts cloud function: uses require("pdf-parse") and calls pdfParse(buffer)
+- Found root cause: pdf-parse v2.4.5 exports a PDFParse class, NOT a function. The old v1.1.1 API was pdfParse(buffer) → {text}, but v2.4.5 is new PDFParse(new Uint8Array(buffer)) → await pdf.load() → await pdf.getText() → {pages, text, total}
+- Fixed extractPdfText() to use correct v2.4.5 API
+- Compiled TypeScript, deployed to Firebase Cloud Functions successfully
+- Tested locally: extraction works correctly, returns text content
+- The standardFontDataUrl warning is harmless for text extraction
+- Pushed fix to GitHub
+
+Stage Summary:
+- Root cause: pdf-parse v2.4.5 API incompatibility (exports class, not function)
+- Fix: Updated to use new PDFParse API with load()/getText()/destroy()
+- Deployed apiExtractFile to Firebase successfully
+- GitHub push: 301f77a4
