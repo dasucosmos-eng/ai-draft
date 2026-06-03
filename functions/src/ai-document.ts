@@ -1,0 +1,120 @@
+// @ts-nocheck
+import { aiFunctionSecrets } from "./secrets";
+// ai-document — Firebase Cloud Function
+// Analyzes legal documents using Sarvam → Groq → Gemini fallback
+// Returns: { summary, keyClauses, riskPoints, missingElements, deadlines, parties, suggestedActions, documentLanguage }
+
+import { https } from "firebase-functions/v2";
+import { restrictedCors } from "./cors";
+import { stripMarkdownFromData } from "./utils";
+import { callSarvamStructured } from "./sarvam-client";
+import { callGroqStructured, logUsage } from "./groq-client";
+import { callGeminiText } from "./gemini-client";
+
+const corsHandler = restrictedCors;
+
+const SYSTEM_PROMPT = `You are an expert Indian legal document analyst. You review legal documents and provide comprehensive analysis including risks, missing elements, and actionable suggestions.
+
+Your analysis covers:
+- Document summary and purpose identification
+- Key clauses and their legal implications
+- Risk identification (unfavorable clauses, ambiguities, compliance issues)
+- Missing elements that should be included
+- Important deadlines and time limitations
+- Party identification and roles
+- Suggested actions for the advocate
+
+You understand Indian legal documents including contracts, pleadings, court orders, affidavits, notices, agreements, and legal correspondence.`;
+
+const JSON_STRUCTURE = `{
+  "summary": "A concise 3-5 sentence summary of what the document is about and its purpose",
+  "keyClauses": ["Important clause description 1", "Important clause description 2"],
+  "riskPoints": ["Risk description 1", "Risk description 2"],
+  "missingElements": ["Missing element 1", "Missing element 2"],
+  "deadlines": ["Deadline description 1"],
+  "parties": [{"role": "Role in document", "name": "Party name"}],
+  "suggestedActions": ["Actionable suggestion 1", "Actionable suggestion 2"],
+  "documentLanguage": "English/Hindi/etc"
+}`;
+
+export const apiAiDocument = https.onRequest(
+  {
+    timeoutSeconds: 180,
+    region: "us-central1", secrets: aiFunctionSecrets,
+  },
+  async (req, res) => {
+    return corsHandler(req, res, async () => {
+      if (req.method !== "POST") {
+        res.status(405).json({ error: "Method not allowed" });
+        return;
+      }
+      try {
+        const { documentContent } = req.body;
+        if (!documentContent) {
+          res.status(400).json({ error: "Document content is required" });
+          return;
+        }
+
+        const userPrompt = `Analyze the following legal document thoroughly:\n\n---\n${documentContent}\n---\n\nProvide a comprehensive legal analysis covering all aspects mentioned in your instructions.`;
+
+        let data: {
+          summary: string;
+          keyClauses: string[];
+          riskPoints: string[];
+          missingElements: string[];
+          deadlines: string[];
+          parties: { role: string; name: string }[];
+          suggestedActions: string[];
+          documentLanguage: string;
+        };
+        try {
+          data = await callSarvamStructured<{
+            summary: string;
+            keyClauses: string[];
+            riskPoints: string[];
+            missingElements: string[];
+            deadlines: string[];
+            parties: { role: string; name: string }[];
+            suggestedActions: string[];
+            documentLanguage: string;
+          }>(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-105b");
+        } catch (sarvamErr) {
+          console.error("[ai-document] Sarvam failed, falling back to Groq:", sarvamErr?.message);
+          try {
+            data = await callGroqStructured<{
+              summary: string;
+              keyClauses: string[];
+              riskPoints: string[];
+              missingElements: string[];
+              deadlines: string[];
+              parties: { role: string; name: string }[];
+              suggestedActions: string[];
+              documentLanguage: string;
+            }>(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3);
+          } catch (groqErr) {
+            console.error("[ai-document] Groq failed, falling back to Gemini:", groqErr?.message);
+            const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${JSON_STRUCTURE}`;
+            const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+            const cleaned = geminiResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            data = jsonMatch ? JSON.parse(jsonMatch[0]) : {
+              summary: geminiResponse.substring(0, 500),
+              keyClauses: [], riskPoints: [], missingElements: [],
+              deadlines: [], parties: [], suggestedActions: [], documentLanguage: "English",
+            };
+          }
+        }
+
+        logUsage("ai-document", undefined, 3500);
+
+        res.json(data);
+      } catch (error) {
+        console.error("[ai-document] Error:", error);
+        res.status(500).json({
+          error: "Failed to analyze document",
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+);

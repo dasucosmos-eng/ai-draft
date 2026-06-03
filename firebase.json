@@ -1,0 +1,181 @@
+{
+  "functions": {
+    "source": "functions",
+    "secrets": [
+      "GEMINI_API_KEY",
+      "SARVAM_API_KEY",
+      "GROQ_API_KEY",
+      "ALLOWED_ORIGINS",
+      "INDIAN_KANOON_API_KEY",
+      "GOOGLE_CSE_ID",
+      "RAZORPAY_KEY_ID",
+      "RAZORPAY_KEY_SECRET"
+    ]
+  },
+  "hosting": {
+    "public": "out",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "functions/**",
+      "skills/**",
+      "src/**",
+      "prisma/**",
+      "examples/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/ai-chat",
+        "function": "apiAiChat"
+      },
+      {
+        "source": "/api/ai-draft",
+        "function": "apiAiDraft"
+      },
+      {
+        "source": "/api/ai-document",
+        "function": "apiAiDocument"
+      },
+      {
+        "source": "/api/ai-intake",
+        "function": "apiAiIntake"
+      },
+      {
+        "source": "/api/ai-research",
+        "function": "apiAiResearch"
+      },
+      {
+        "source": "/api/ai-litigation",
+        "function": "apiAiLitigation"
+      },
+      {
+        "source": "/api/ai-extract-file",
+        "function": "apiExtractFile"
+      },
+      {
+        "source": "/api/ai-civil",
+        "function": "apiAiCivil"
+      },
+      {
+        "source": "/api/ai-criminal",
+        "function": "apiAiCriminal"
+      },
+      {
+        "source": "/api/ai-family",
+        "function": "apiAiFamily"
+      },
+      {
+        "source": "/api/ai-execution",
+        "function": "apiAiExecution"
+      },
+      {
+        "source": "/api/ai-extract-data",
+        "function": "apiAiExtractData"
+      },
+      {
+        "source": "/api/razorpay-create-order",
+        "function": "apiRazorpayCreateOrder"
+      },
+      {
+        "source": "/api/razorpay-verify",
+        "function": "apiRazorpayVerify"
+      },
+      {
+        "source": "/api/auth-google-url",
+        "function": "authGoogleUrl"
+      },
+      {
+        "source": "/api/auth-google-callback",
+        "function": "authGoogleCallback"
+      },
+      {
+        "source": "/api/auth-google",
+        "function": "authGoogle"
+      },
+      {
+        "source": "/api/auth-email-signup",
+        "function": "authEmailSignup"
+      },
+      {
+        "source": "/api/auth-email-signin",
+        "function": "authEmailSignin"
+      },
+      {
+        "source": "/api/auth-phone-send",
+        "function": "authPhoneSend"
+      },
+      {
+        "source": "/api/auth-phone-verify",
+        "function": "authPhoneVerify"
+      },
+      {
+        "source": "/api/auth-verify",
+        "function": "authVerify"
+      },
+      {
+        "source": "/api/crm-sync",
+        "function": "apiCrmSync"
+      },
+      {
+        "source": "/api/user-data",
+        "function": "apiUserData",
+        "region": "us-central1"
+      },
+      {
+        "source": "/api/file-upload-url",
+        "function": "fileUploadUrl",
+        "region": "us-central1"
+      },
+      {
+        "source": "/api/file-delete",
+        "function": "fileDelete",
+        "region": "us-central1"
+      },
+      {
+        "source": "/api/file-list",
+        "function": "fileList",
+        "region": "us-central1"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(jpg|jpeg|gif|png|svg|webp|ico)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=3600"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(js|css)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      }
+    ]
+  },
+  "storage": [
+    {
+      "target": "ai-draft-39e32.appspot.com",
+      "rules": "storage.rules"
+    }
+  ]
+}
