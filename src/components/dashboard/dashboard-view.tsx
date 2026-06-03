@@ -230,16 +230,21 @@ export default function DashboardView() {
   }
 
   const stats = useMemo(() => {
-    const activeCases = cases.filter((c) => c.status === 'Active').length
-    const todayHearings = timeline.filter((e) => {
-      const d = getDaysUntil(e.eventDate)
-      return e.eventType === 'Hearing' && d <= 1 && d >= 0 && !e.isCompleted
-    }).length
-    const pendingTasks = tasks.filter((t) => t.status !== 'Completed').length
-    const pendingPayments = invoices
-      .filter((i) => i.status !== 'Paid')
-      .reduce((sum, i) => sum + safeNum(i.totalAmount), 0)
-    return { activeCases, todayHearings, pendingTasks, pendingPayments }
+    try {
+      const activeCases = cases.filter((c) => c.status === 'Active').length
+      const todayHearings = timeline.filter((e) => {
+        const d = getDaysUntil(e.eventDate)
+        return e.eventType === 'Hearing' && d <= 1 && d >= 0 && !e.isCompleted
+      }).length
+      const pendingTasks = tasks.filter((t) => t.status !== 'Completed').length
+      const pendingPayments = invoices
+        .filter((i) => i.status !== 'Paid')
+        .reduce((sum, i) => sum + safeNum(i.totalAmount), 0)
+      return { activeCases, todayHearings, pendingTasks, pendingPayments }
+    } catch (e) {
+      console.error('[Dashboard] stats error:', e)
+      return { activeCases: 0, todayHearings: 0, pendingTasks: 0, pendingPayments: 0 }
+    }
   }, [cases, tasks, timeline, invoices])
 
   const priorityBreakdown = useMemo(() => {

@@ -342,9 +342,14 @@ export const useAppStore = create<AppState>()(
       documents: [],
       setDocuments: (docs) => set({ documents: docs }),
       addDocument: (doc) => { set((state) => ({ documents: [doc, ...state.documents] })); debouncedSync(); },
-      updateDocument: (id, updates) => { set((state) => ({
-        documents: state.documents.map(d => d.id === id ? { ...d, ...updates } : d)
-      })); debouncedSync(); },
+      updateDocument: (id, updates) => {
+        set((state) => ({
+          documents: state.documents.map(d => d.id === id ? { ...d, ...updates } : d)
+        }))
+        // Immediately sync document content changes to Firestore (not debounced)
+        // to ensure edits are never lost on logout/navigation
+        syncToFirestore()
+      },
 
       // Invoices
       invoices: [],
@@ -417,8 +422,19 @@ export const useAppStore = create<AppState>()(
         _activeUid: state._activeUid,
       }),
       onRehydrateStorage: () => (state) => {
-        // After hydration, if no user is present, keep dataLoaded false
-        // so the UI knows to wait for Firestore load on login
+        // After hydration, sanitize all data to prevent React rendering errors
+        // (e.g., Firestore Timestamps serialized as objects in localStorage)
+        if (state) {
+          try {
+            if (state.cases?.length) state.cases = sanitizeCases(state.cases)
+            if (state.timelineEvents?.length) state.timelineEvents = sanitizeTimeline(state.timelineEvents)
+            if (state.tasks?.length) state.tasks = sanitizeTasks(state.tasks)
+            if (state.documents?.length) state.documents = sanitizeDocuments(state.documents)
+            if (state.invoices?.length) state.invoices = sanitizeInvoices(state.invoices)
+          } catch (e) {
+            console.error('[app-store] Rehydration sanitization error:', e)
+          }
+        }
       },
     }
   )
@@ -437,6 +453,28 @@ export const useAppStore = create<AppState>()(
  * Ensures all fields expected to be primitives are primitives (not objects/undefined).
  * Firestore Timestamps are converted to ISO strings.
  */
+/** Convert Firestore Timestamp-like objects to ISO strings */
+function safeStr(val: unknown): string | undefined {
+  if (val == null) return undefined
+  if (typeof val === 'string') return val
+  if (typeof val === 'number') return new Date(val).toISOString() || String(val)
+  if (typeof val === 'boolean') return String(val)
+  if (typeof val === 'object') {
+    // Firestore Timestamp serialized as { _seconds, _nanoseconds } or { seconds, nanoseconds }
+    const obj = val as Record<string, unknown>
+    const secs = obj._seconds ?? obj.seconds
+    if (typeof secs === 'number') {
+      const ms = (obj._nanoseconds ?? obj.nanoseconds ?? 0) as number / 1e6
+      return new Date((secs as number) * 1000 + ms).toISOString()
+    }
+    // Date object
+    if (val instanceof Date) return val.toISOString()
+    // Fallback
+    return undefined
+  }
+  return String(val)
+}
+
 function sanitizeCases(cases: any[]): CaseItem[] {
   return cases.map((c: any) => ({
     ...c,
@@ -445,14 +483,37 @@ function sanitizeCases(cases: any[]): CaseItem[] {
     caseType: String(c.caseType || ''),
     status: String(c.status || ''),
     priority: String(c.priority || 'Medium'),
-    courtName: c.courtName != null ? String(c.courtName) : undefined,
-    caseNumber: c.caseNumber != null ? String(c.caseNumber) : undefined,
-    nextHearing: c.nextHearing != null ? String(c.nextHearing) : undefined,
-    clientName: c.clientName != null ? String(c.clientName) : undefined,
-    filingDate: c.filingDate != null ? String(c.filingDate) : undefined,
-    description: c.description != null ? String(c.description) : undefined,
-    createdAt: String(c.createdAt || new Date().toISOString()),
-    updatedAt: String(c.updatedAt || new Date().toISOString()),
+    jurisdiction: safeStr(c.jurisdiction),
+    courtName: safeStr(c.courtName),
+    judgeName: safeStr(c.judgeName),
+    caseNumber: safeStr(c.caseNumber),
+    nextHearing: safeStr(c.nextHearing),
+    clientName: safeStr(c.clientName),
+    clientEmail: safeStr(c.clientEmail),
+    clientPhone: safeStr(c.clientPhone),
+    filingDate: safeStr(c.filingDate),
+    description: safeStr(c.description),
+    accusedName: safeStr(c.accusedName),
+    accusedPhone: safeStr(c.accusedPhone),
+    accusedEmail: safeStr(c.accusedEmail),
+    accusedAddress: safeStr(c.accusedAddress),
+    opposingParty: safeStr(c.opposingParty),
+    opposingPartyPhone: safeStr(c.opposingPartyPhone),
+    opposingPartyEmail: safeStr(c.opposingPartyEmail),
+    opposingPartyAddress: safeStr(c.opposingPartyAddress),
+    clientAdvocate: safeStr(c.clientAdvocate),
+    opposingAdvocate: safeStr(c.opposingAdvocate),
+    opposingCounsel: safeStr(c.opposingCounsel),
+    firNumber: safeStr(c.firNumber),
+    policeStation: safeStr(c.policeStation),
+    crrNumber: safeStr(c.crrNumber),
+    causeOfAction: safeStr(c.causeOfAction),
+    reliefSought: safeStr(c.reliefSought),
+    createdAt: safeStr(c.createdAt) || new Date().toISOString(),
+    updatedAt: safeStr(c.updatedAt) || new Date().toISOString(),
+    // Arrays: filter to ensure strings only
+    underSections: Array.isArray(c.underSections) ? c.underSections.map(String) : undefined,
+    victimNames: Array.isArray(c.victimNames) ? c.victimNames.map(String) : undefined,
   }))
 }
 
@@ -461,8 +522,9 @@ function sanitizeTimeline(events: any[]): TimelineEvent[] {
     ...e,
     id: String(e.id || ''),
     title: String(e.title || ''),
+    description: safeStr(e.description),
     eventType: String(e.eventType || ''),
-    eventDate: String(e.eventDate || ''),
+    eventDate: safeStr(e.eventDate) || '',
     isCompleted: Boolean(e.isCompleted),
     isMilestone: Boolean(e.isMilestone),
     reminderSet: Boolean(e.reminderSet),
@@ -476,8 +538,10 @@ function sanitizeTasks(tasks: any[]): TaskItem[] {
     title: String(t.title || ''),
     status: String(t.status || 'Pending'),
     priority: String(t.priority || 'Medium'),
-    dueDate: t.dueDate != null ? String(t.dueDate) : undefined,
-    description: t.description != null ? String(t.description) : undefined,
+    dueDate: safeStr(t.dueDate),
+    description: safeStr(t.description),
+    assignee: safeStr(t.assignee),
+    taskType: safeStr(t.taskType),
   }))
 }
 
@@ -489,8 +553,9 @@ function sanitizeDocuments(docs: any[]): DocumentItem[] {
     type: String(d.type || ''),
     category: String(d.category || ''),
     content: d.content != null ? String(d.content) : '',
-    summary: d.summary != null ? String(d.summary) : undefined,
-    createdAt: String(d.createdAt || new Date().toISOString()),
+    summary: safeStr(d.summary),
+    metadata: safeStr(d.metadata),
+    createdAt: safeStr(d.createdAt) || new Date().toISOString(),
   }))
 }
 
@@ -503,10 +568,11 @@ function sanitizeInvoices(invoices: any[]): InvoiceItem[] {
     amount: typeof i.amount === 'number' ? i.amount : 0,
     gstAmount: typeof i.gstAmount === 'number' ? i.gstAmount : 0,
     totalAmount: typeof i.totalAmount === 'number' ? i.totalAmount : 0,
-    issuedDate: String(i.issuedDate || ''),
-    dueDate: String(i.dueDate || ''),
-    description: i.description != null ? String(i.description) : undefined,
-    caseTitle: i.caseTitle != null ? String(i.caseTitle) : undefined,
+    issuedDate: safeStr(i.issuedDate) || '',
+    dueDate: safeStr(i.dueDate) || '',
+    paidDate: safeStr(i.paidDate),
+    description: safeStr(i.description),
+    caseTitle: safeStr(i.caseTitle),
   }))
 }
 

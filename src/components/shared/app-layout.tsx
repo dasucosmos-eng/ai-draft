@@ -239,7 +239,7 @@ function ViewRouter() {
   }
 
   return (
-    <ViewErrorBoundary onError={(msg) => setViewError(msg)}>
+    <ViewErrorBoundary key={currentView} onError={(msg) => setViewError(msg)}>
       <Suspense fallback={<ViewLoading />}>
         {views[currentView] || views.dashboard}
       </Suspense>
