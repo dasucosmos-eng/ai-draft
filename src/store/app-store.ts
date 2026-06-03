@@ -261,6 +261,7 @@ interface AppState {
   documents: DocumentItem[]
   setDocuments: (docs: DocumentItem[]) => void
   addDocument: (doc: DocumentItem) => void
+  updateDocument: (id: string, updates: Partial<DocumentItem>) => void
 
   // Invoices
   invoices: InvoiceItem[]
@@ -341,6 +342,9 @@ export const useAppStore = create<AppState>()(
       documents: [],
       setDocuments: (docs) => set({ documents: docs }),
       addDocument: (doc) => { set((state) => ({ documents: [doc, ...state.documents] })); debouncedSync(); },
+      updateDocument: (id, updates) => { set((state) => ({
+        documents: state.documents.map(d => d.id === id ? { ...d, ...updates } : d)
+      })); debouncedSync(); },
 
       // Invoices
       invoices: [],
@@ -428,6 +432,84 @@ export const useAppStore = create<AppState>()(
 // On mutation, we sync to Firestore after a debounce.
 // This ensures all browsers/devices see the same data.
 
+/**
+ * Sanitize data loaded from Firestore to prevent React rendering errors.
+ * Ensures all fields expected to be primitives are primitives (not objects/undefined).
+ * Firestore Timestamps are converted to ISO strings.
+ */
+function sanitizeCases(cases: any[]): CaseItem[] {
+  return cases.map((c: any) => ({
+    ...c,
+    id: String(c.id || ''),
+    title: String(c.title || ''),
+    caseType: String(c.caseType || ''),
+    status: String(c.status || ''),
+    priority: String(c.priority || 'Medium'),
+    courtName: c.courtName != null ? String(c.courtName) : undefined,
+    caseNumber: c.caseNumber != null ? String(c.caseNumber) : undefined,
+    nextHearing: c.nextHearing != null ? String(c.nextHearing) : undefined,
+    clientName: c.clientName != null ? String(c.clientName) : undefined,
+    filingDate: c.filingDate != null ? String(c.filingDate) : undefined,
+    description: c.description != null ? String(c.description) : undefined,
+    createdAt: String(c.createdAt || new Date().toISOString()),
+    updatedAt: String(c.updatedAt || new Date().toISOString()),
+  }))
+}
+
+function sanitizeTimeline(events: any[]): TimelineEvent[] {
+  return events.map((e: any) => ({
+    ...e,
+    id: String(e.id || ''),
+    title: String(e.title || ''),
+    eventType: String(e.eventType || ''),
+    eventDate: String(e.eventDate || ''),
+    isCompleted: Boolean(e.isCompleted),
+    isMilestone: Boolean(e.isMilestone),
+    reminderSet: Boolean(e.reminderSet),
+  }))
+}
+
+function sanitizeTasks(tasks: any[]): TaskItem[] {
+  return tasks.map((t: any) => ({
+    ...t,
+    id: String(t.id || ''),
+    title: String(t.title || ''),
+    status: String(t.status || 'Pending'),
+    priority: String(t.priority || 'Medium'),
+    dueDate: t.dueDate != null ? String(t.dueDate) : undefined,
+    description: t.description != null ? String(t.description) : undefined,
+  }))
+}
+
+function sanitizeDocuments(docs: any[]): DocumentItem[] {
+  return docs.map((d: any) => ({
+    ...d,
+    id: String(d.id || ''),
+    name: String(d.name || ''),
+    type: String(d.type || ''),
+    category: String(d.category || ''),
+    content: d.content != null ? String(d.content) : '',
+    summary: d.summary != null ? String(d.summary) : undefined,
+    createdAt: String(d.createdAt || new Date().toISOString()),
+  }))
+}
+
+function sanitizeInvoices(invoices: any[]): InvoiceItem[] {
+  return invoices.map((i: any) => ({
+    ...i,
+    id: String(i.id || ''),
+    invoiceNumber: String(i.invoiceNumber || ''),
+    status: String(i.status || 'Pending'),
+    amount: typeof i.amount === 'number' ? i.amount : 0,
+    gstAmount: typeof i.gstAmount === 'number' ? i.gstAmount : 0,
+    totalAmount: typeof i.totalAmount === 'number' ? i.totalAmount : 0,
+    issuedDate: String(i.issuedDate || ''),
+    dueDate: String(i.dueDate || ''),
+    description: i.description != null ? String(i.description) : undefined,
+    caseTitle: i.caseTitle != null ? String(i.caseTitle) : undefined,
+  }))
+}
+
 let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let _syncInProgress = false
 
@@ -513,7 +595,7 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       const state = useAppStore.getState()
 
       if (d.cases && d.cases.length > 0) {
-        state.setCases(d.cases)
+        state.setCases(sanitizeCases(d.cases))
       } else if (state.cases.length > 0) {
         // MIGRATION: local has cases but Firestore doesn't — push them up
         console.log('[app-store] Migrating', state.cases.length, 'local cases to Firestore')
@@ -521,25 +603,25 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       }
 
       if (d.documents && d.documents.length > 0) {
-        state.setDocuments(d.documents)
+        state.setDocuments(sanitizeDocuments(d.documents))
       } else if (state.documents.length > 0) {
         needsMigration = true
       }
 
       if (d.tasks && d.tasks.length > 0) {
-        state.setTasks(d.tasks)
+        state.setTasks(sanitizeTasks(d.tasks))
       } else if (state.tasks.length > 0) {
         needsMigration = true
       }
 
       if (d.timelineEvents && d.timelineEvents.length > 0) {
-        state.setTimelineEvents(d.timelineEvents)
+        state.setTimelineEvents(sanitizeTimeline(d.timelineEvents))
       } else if (state.timelineEvents.length > 0) {
         needsMigration = true
       }
 
       if (d.invoices && d.invoices.length > 0) {
-        state.setInvoices(d.invoices)
+        state.setInvoices(sanitizeInvoices(d.invoices))
       } else if (state.invoices.length > 0) {
         needsMigration = true
       }

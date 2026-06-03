@@ -166,6 +166,7 @@ export default function CaseDetailView() {
   const updateTask = useAppStore((s) => s.updateTask)
   const addTask = useAppStore((s) => s.addTask)
   const addDocument = useAppStore((s) => s.addDocument)
+  const updateDocument = useAppStore((s) => s.updateDocument)
 
   const [activeTab, setActiveTab] = useState('overview')
   const [caseNotes, setCaseNotes] = useState('')
@@ -285,13 +286,6 @@ ${profile?.email ? `<p>Email: ${profile.email}</p>` : ''}
       console.error('Failed to generate Word doc:', err)
       toast.error('Failed to generate Word document. Please try again.')
     }
-  }
-
-  const updateDocumentContent = (docId: string, newContent: string) => {
-    const docs = useAppStore.getState().documents
-    const updatedDocs = docs.map(d => d.id === docId ? { ...d, content: newContent } : d)
-    useAppStore.getState().setDocuments(updatedDocs)
-    toast.success('Document updated successfully')
   }
 
   const handleFileUpload = () => {
@@ -982,7 +976,9 @@ ${profile?.email ? `<p>Email: ${profile.email}</p>` : ''}
         docId={viewingDoc?.id}
         caseId={selectedCaseId ?? undefined}
         onSaveContent={(docId, newContent) => {
-          updateDocumentContent(docId, newContent)
+          updateDocument(docId, { content: newContent })
+          // Also update viewingDoc so the modal shows the new content
+          setViewingDoc(prev => prev ? { ...prev, content: newContent } : null)
         }}
       />
     </motion.div>

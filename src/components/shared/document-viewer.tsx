@@ -55,6 +55,7 @@ export function DocumentViewer({
   const handleSave = () => {
     onSaveContent?.(docId!, editedContent)
     setIsEditing(false)
+    toast.success('Document updated successfully')
   }
 
   const handleCancel = () => {
