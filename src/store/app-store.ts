@@ -420,6 +420,9 @@ export const useAppStore = create<AppState>()(
         executionMatters: state.executionMatters,
         civilMatters: state.civilMatters,
         _activeUid: state._activeUid,
+        // NOTE: Do NOT persist dataLoaded — it must always start as false
+        // to prevent hydration mismatch (error #310) on hard refresh.
+        // dataLoaded is set to true only after loadFromFirestore() completes.
       }),
       onRehydrateStorage: () => (state) => {
         // After hydration, sanitize all data to prevent React rendering errors
@@ -434,6 +437,13 @@ export const useAppStore = create<AppState>()(
           } catch (e) {
             console.error('[app-store] Rehydration sanitization error:', e)
           }
+          // CRITICAL: After Zustand persist hydration, force dataLoaded back to false.
+          // This ensures the dashboard shows its loading skeleton until loadFromFirestore()
+          // completes, preventing React error #310 (hydration mismatch).
+          // Without this, dataLoaded could be true from a prior session's runtime state,
+          // causing the dashboard to render real data during hydration while the
+          // pre-rendered HTML shows the skeleton → mismatch.
+          state.dataLoaded = false
         }
       },
     }

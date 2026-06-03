@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useAppStore, type CaseItem, type TaskItem, type InvoiceItem, type TimelineEvent } from '@/store/app-store'
 import { cn } from '@/lib/utils'
@@ -30,6 +30,17 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
+
+/* ─── Client-only mount gate ─── */
+// Prevents React error #310 (hydration mismatch) caused by framer-motion
+// animation styles that don't exist in pre-rendered static HTML.
+// On hard refresh, SSR HTML has no animation → client adds opacity:0 → mismatch.
+// This hook ensures we only render after the component has mounted on the client.
+function useIsMounted() {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  return mounted
+}
 
 /* ─── Animation Variants ─── */
 
@@ -200,6 +211,7 @@ function EmptyStateCard({ icon: Icon, title, description, action, onAction }: {
 /* ─── Main Component ─── */
 
 export default function DashboardView() {
+  const isMounted = useIsMounted()
   const cases = useAppStore((s) => s.cases)
   const tasks = useAppStore((s) => s.tasks)
   const timeline = useAppStore((s) => s.timelineEvents)
@@ -207,6 +219,11 @@ export default function DashboardView() {
   const dataLoaded = useAppStore((s) => s.dataLoaded)
   const setCurrentView = useAppStore((s) => s.setCurrentView)
   const setSelectedCaseId = useAppStore((s) => s.setSelectedCaseId)
+
+  // Prevent hydration mismatch: don't render motion animations during SSR/hydration.
+  // Return null on first render (SSR/static), then render after client mount.
+  // The Suspense fallback in ViewRouter handles the initial loading state.
+  if (!isMounted) return null
 
   // Show loading skeleton while Firestore data is being fetched
   if (!dataLoaded) {
