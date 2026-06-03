@@ -88,7 +88,7 @@ export function ProfileForm() {
   const firestoreStatus = useProfileStore((s) => s.firestoreStatus)
   const [open, setOpen] = useState(false)
   const [hydrated, setHydrated] = useState(false)
-  const hydratedAtRef = useRef(0)
+  const hasDecidedRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
   const [formData, setFormData] = useState<ProfileFormData>({
     fullName: '',
@@ -104,42 +104,25 @@ export function ProfileForm() {
   // Mark as hydrated on mount
   useEffect(() => {
     setHydrated(true)
-    hydratedAtRef.current = Date.now()
   }, [])
 
-  // Show popup ONLY after Firestore has finished loading AND profile is incomplete
-  // AND at least 2 seconds have passed since hydration (to let Firestore respond)
+  // Show popup ONLY after Firestore has finished loading AND profile is still incomplete.
+  // Uses a ref to ensure the decision is made exactly once.
+  // No timer, no fullName dependency — just: Firestore done + isComplete check.
   useEffect(() => {
     if (!hydrated) return
     if (firestoreStatus !== 'loaded') return
-    // Safety gate: wait at least 2s after hydration for Firestore to respond
-    const elapsed = Date.now() - hydratedAtRef.current
-    if (elapsed < 2000) {
-      const timer = setTimeout(() => {
-        if (!useProfileStore.getState().profile.isComplete) {
-          setFormData({
-            fullName: profile.fullName || '',
-            email: profile.email || '',
-            phone: profile.phone || '',
-            barCouncilNumber: profile.barCouncilNumber || '',
-            firmName: profile.firmName || '',
-            city: profile.city || '',
-            practiceArea: profile.practiceArea || '',
-          })
-          setOpen(true)
-        }
-      }, 2000 - elapsed)
-      return () => clearTimeout(timer)
-    }
+    // Already decided — don't re-evaluate
+    if (hasDecidedRef.current) return
+    hasDecidedRef.current = true
 
-    // At this point, Firestore has loaded (or failed — no data).
-    // The profile in the store is the truth.
     if (profile.isComplete) {
+      // Profile is complete in Firestore — never show popup
       setOpen(false)
       return
     }
 
-    // Profile is incomplete — show popup
+    // Profile is incomplete — show popup with whatever data we have
     setFormData({
       fullName: profile.fullName || '',
       email: profile.email || '',
@@ -150,7 +133,7 @@ export function ProfileForm() {
       practiceArea: profile.practiceArea || '',
     })
     setOpen(true)
-  }, [hydrated, firestoreStatus, profile.isComplete, profile.fullName])
+  }, [hydrated, firestoreStatus, profile])
 
   const updateField = (key: keyof ProfileFormData, value: string) => {
     setFormData((prev) => ({ ...prev, [key]: value }))
