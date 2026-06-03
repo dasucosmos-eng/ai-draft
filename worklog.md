@@ -61,3 +61,24 @@ Stage Summary:
 - Fix: Updated to use new PDFParse API with load()/getText()/destroy()
 - Deployed apiExtractFile to Firebase successfully
 - GitHub push: 301f77a4
+
+---
+Task ID: 2
+Agent: main + subagents
+Task: Enhanced intake extraction with auto-fill, document correction, and full case detail fields
+
+Work Log:
+- Enhanced AI intake cloud function JSON structure to extract detailed fields: parties with phone/email/address, opposing parties, victims, advocate details, FIR/CRR numbers, court/judge, sections, cause of action, relief sought
+- Extended CaseItem interface with 18 new fields
+- Updated ai-intake-view.tsx to map enriched AI response to all CaseItem fields
+- Updated case-detail-view Overview tab to show all extracted fields
+- Updated document-viewer with inline correction/editing (Edit button → Textarea → Save/Cancel)
+- Wired up document save to store via onSaveContent callback
+- Built frontend, compiled cloud functions, deployed to Firebase
+- Pushed to GitHub
+
+Stage Summary:
+- Full extraction flow: upload → extract text → AI analysis → auto-fill ALL fields → auto-draft → push to client profile
+- Document correction: Edit button in viewer, save updates store, PDF/Word download
+- Deployed: hosting + apiAiIntake cloud function
+- GitHub commit: 089e5b82
