@@ -102,6 +102,14 @@ export const useClientsStore = create<ClientsState>()(
       name: 'aidraft_clients',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ clients: state.clients }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        // CRITICAL: Wipe clients on rehydration to prevent cross-user contamination.
+        // Clients will be reloaded from Firestore via loadClientsFromFirestore().
+        // Without this, logging in as a different user would briefly show the
+        // previous user's client list.
+        state.clients = []
+      },
     }
   )
 )

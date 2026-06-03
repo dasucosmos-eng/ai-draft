@@ -48,7 +48,21 @@ export const useProfileStore = create<ProfileState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ profile: state.profile }),
       onRehydrateStorage: () => (state) => {
-        if (state) state.setFirestoreStatus('pending')
+        if (!state) return
+        // CRITICAL: Check if the hydrated profile belongs to the CURRENT logged-in user.
+        // Profile localStorage is NOT scoped by user — if a different user logs in,
+        // the old profile data from the previous user would contaminate the new session.
+        // Detect this by comparing with the current UID's expected profile data.
+        // The safest approach: always reset profile on rehydration and let Firestore
+        // provide the correct data. This prevents the profile popup from showing
+        // old/incomplete data from a different user.
+        const currentUid = localStorage.getItem('aidraft_current_uid')
+        // Always reset to default on hydration — Firestore will set the real data.
+        // This prevents cross-user profile contamination.
+        // The cost is a brief flash of empty profile before Firestore loads,
+        // but that's much better than showing the wrong user's profile.
+        state.profile = { ...defaultProfile }
+        state.setFirestoreStatus('pending')
       },
     }
   )

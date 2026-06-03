@@ -158,8 +158,8 @@ export interface ExecutionMatter {
   costs?: string
   courtName: string
   parties: { plaintiff: string; defendant: string; plaintiffCounsel?: string; defendantCounsel?: string }
- modes: string[]
- filedOn?: string
+  modes: string[]
+  filedOn?: string
   limitationLastDate?: string
   status: 'DRAFT' | 'PENDING' | 'ALLOWED' | 'DISMISSED' | 'PARTLY_SATISFIED' | 'FULLY_SATISFIED'
   amountPaid?: string
@@ -195,9 +195,9 @@ export interface CivilDraftDocument {
   title: string
   content: string
   paraReplies?: { paraNumber: number; plainText: string; stance: string; replyDraft: string }[]
- preliminarySubmissions?: string[]
- issueArguments?: { issueNumber: number; heading: string; argumentDraft: string }[]
- keyPoints?: string[]
+  preliminarySubmissions?: string[]
+  issueArguments?: { issueNumber: number; heading: string; argumentDraft: string }[]
+  keyPoints?: string[]
   warnings?: string[]
   version: number
   createdAt: string
@@ -230,8 +230,6 @@ export interface CivilMatter {
 }
 
 /* ─── User-scoped Storage Adapter ─── */
-
-// No uid-scoped storage — uses plain localStorage with fixed keys
 
 interface AppState {
   // Navigation
@@ -425,24 +423,38 @@ export const useAppStore = create<AppState>()(
         // dataLoaded is set to true only after loadFromFirestore() completes.
       }),
       onRehydrateStorage: () => (state) => {
-        // After hydration, sanitize all data to prevent React rendering errors
-        // (e.g., Firestore Timestamps serialized as objects in localStorage)
         if (state) {
-          try {
-            if (state.cases?.length) state.cases = sanitizeCases(state.cases)
-            if (state.timelineEvents?.length) state.timelineEvents = sanitizeTimeline(state.timelineEvents)
-            if (state.tasks?.length) state.tasks = sanitizeTasks(state.tasks)
-            if (state.documents?.length) state.documents = sanitizeDocuments(state.documents)
-            if (state.invoices?.length) state.invoices = sanitizeInvoices(state.invoices)
-          } catch (e) {
-            console.error('[app-store] Rehydration sanitization error:', e)
+          // CRITICAL: Check if the hydrated data belongs to the CURRENT logged-in user.
+          // If localStorage has data from a DIFFERENT user (different _activeUid),
+          // wipe it all to prevent cross-user data contamination.
+          const currentUid = localStorage.getItem('aidraft_current_uid')
+          if (state._activeUid && currentUid && state._activeUid !== currentUid) {
+            console.warn(
+              `[app-store] UID mismatch! localStorage has uid=${state._activeUid} but current user is uid=${currentUid}.`,
+              'Wiping stale data to prevent cross-user contamination.'
+            )
+            state.cases = []
+            state.timelineEvents = []
+            state.tasks = []
+            state.documents = []
+            state.invoices = []
+            state.chatMessages = []
+            state.executionMatters = []
+            state.civilMatters = []
+            state._activeUid = currentUid
+          } else {
+            // Same user or first login — sanitize as before
+            try {
+              if (state.cases?.length) state.cases = sanitizeCases(state.cases)
+              if (state.timelineEvents?.length) state.timelineEvents = sanitizeTimeline(state.timelineEvents)
+              if (state.tasks?.length) state.tasks = sanitizeTasks(state.tasks)
+              if (state.documents?.length) state.documents = sanitizeDocuments(state.documents)
+              if (state.invoices?.length) state.invoices = sanitizeInvoices(state.invoices)
+            } catch (e) {
+              console.error('[app-store] Rehydration sanitization error:', e)
+            }
           }
-          // CRITICAL: After Zustand persist hydration, force dataLoaded back to false.
-          // This ensures the dashboard shows its loading skeleton until loadFromFirestore()
-          // completes, preventing React error #310 (hydration mismatch).
-          // Without this, dataLoaded could be true from a prior session's runtime state,
-          // causing the dashboard to render real data during hydration while the
-          // pre-rendered HTML shows the skeleton → mismatch.
+          // Force dataLoaded=false to prevent hydration mismatch (#310)
           state.dataLoaded = false
         }
       },
@@ -642,6 +654,14 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
   if (!token) {
     useAppStore.getState().setDataLoaded(true)
     return
+  }
+
+  // CRITICAL: Before loading from Firestore, update _activeUid to the current user.
+  // This ensures the store knows which user's data it should hold, and on next
+  // hydration (page refresh), it can detect if a different user logged in.
+  const currentUid = localStorage.getItem('aidraft_current_uid')
+  if (currentUid) {
+    useAppStore.getState().setActiveUid(currentUid)
   }
 
   let needsMigration = false
