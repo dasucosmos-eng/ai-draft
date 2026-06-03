@@ -46,7 +46,8 @@ const secrets_1 = require("./secrets");
 /* ─── Verify Token ─── */
 async function verifyUid(req) {
     const JWT_SECRET = process.env.JWT_SECRET || "aidraft-auth-secret-2026";
-    const token = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+    // Support three token sources: Authorization header, req.body.token, req.body._token (sendBeacon)
+    const token = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token || req.body?._token;
     if (!token)
         return null;
     try {

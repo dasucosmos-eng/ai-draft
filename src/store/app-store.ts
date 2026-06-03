@@ -704,11 +704,14 @@ export function setupSyncOnUnload(): void {
       clearTimeout(_syncDebounceTimer)
       _syncDebounceTimer = null
       // Use sendBeacon for the sync (fire-and-forget, no Authorization header issue
-      // since we include token in the body)
+      // since we include token in the body).
+      // CRITICAL FIX: Use Blob with explicit 'application/json' Content-Type.
+      // Without this, sendBeacon defaults to 'text/plain' and the server
+      // (Express body-parser) won't parse the JSON body → data silently lost.
       const token = localStorage.getItem('aidraft_auth_token')
       if (token) {
         const state = useAppStore.getState()
-        const body = JSON.stringify({
+        const payload = JSON.stringify({
           action: 'save',
           cases: state.cases,
           documents: state.documents,
@@ -717,7 +720,8 @@ export function setupSyncOnUnload(): void {
           invoices: state.invoices,
           _token: token, // Include token in body for sendBeacon
         })
-        navigator.sendBeacon('/api/user-data', body)
+        const blob = new Blob([payload], { type: 'application/json' })
+        navigator.sendBeacon('/api/user-data', blob)
       }
     }
   }

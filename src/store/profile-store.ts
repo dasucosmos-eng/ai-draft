@@ -19,6 +19,7 @@ export interface ProfileData {
 interface ProfileState {
   profile: ProfileData
   firestoreStatus: 'pending' | 'loading' | 'loaded'
+  _profileUid: string | null
   setFirestoreStatus: (s: 'pending' | 'loading' | 'loaded') => void
   setProfile: (data: Partial<ProfileData>) => void
   resetProfile: () => void
@@ -35,33 +36,41 @@ export const useProfileStore = create<ProfileState>()(
     (set) => ({
       profile: { ...defaultProfile },
       firestoreStatus: 'pending',
+      _profileUid: null,
       setFirestoreStatus: (s) => set({ firestoreStatus: s }),
       setProfile: (data) => {
-        const newProfile = { ...useProfileStore.getState().profile, ...data }
-        set({ profile: newProfile })
+        const state = useProfileStore.getState()
+        const newProfile = { ...state.profile, ...data }
+        const currentUid = localStorage.getItem('aidraft_current_uid')
+        set({ profile: newProfile, _profileUid: currentUid })
         debouncedProfileSync(newProfile)
       },
-      resetProfile: () => set({ profile: { ...defaultProfile } }),
+      resetProfile: () => set({ profile: { ...defaultProfile }, _profileUid: null }),
     }),
     {
       name: 'aidraft_profile',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ profile: state.profile }),
+      partialize: (state) => ({ profile: state.profile, _profileUid: state._profileUid }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
-        // CRITICAL: Check if the hydrated profile belongs to the CURRENT logged-in user.
-        // Profile localStorage is NOT scoped by user — if a different user logs in,
-        // the old profile data from the previous user would contaminate the new session.
-        // Detect this by comparing with the current UID's expected profile data.
-        // The safest approach: always reset profile on rehydration and let Firestore
-        // provide the correct data. This prevents the profile popup from showing
-        // old/incomplete data from a different user.
+        // CRITICAL FIX: Only wipe profile if a DIFFERENT user logged in.
+        // Previously, we ALWAYS reset on rehydration, which meant:
+        // 1. Profile was wiped from localStorage
+        // 2. Firestore load had to succeed to restore it
+        // 3. If Firestore load failed (network error, timeout, 401), profile was lost → popup every refresh
+        // Now: keep localStorage data as fallback. Only reset if UID mismatch.
         const currentUid = localStorage.getItem('aidraft_current_uid')
-        // Always reset to default on hydration — Firestore will set the real data.
-        // This prevents cross-user profile contamination.
-        // The cost is a brief flash of empty profile before Firestore loads,
-        // but that's much better than showing the wrong user's profile.
-        state.profile = { ...defaultProfile }
+        if (state._profileUid && currentUid && state._profileUid !== currentUid) {
+          // Different user logged in — wipe to prevent cross-user contamination
+          console.warn(
+            `[profile-store] UID mismatch! localStorage has uid=${state._profileUid} but current user is uid=${currentUid}.`,
+            'Wiping stale profile to prevent cross-user contamination.'
+          )
+          state.profile = { ...defaultProfile }
+          state._profileUid = currentUid
+        }
+        // Same user or first login — KEEP the localStorage profile as fallback.
+        // It will be updated by loadProfileFromFirestore() if Firestore has newer data.
         state.setFirestoreStatus('pending')
       },
     }

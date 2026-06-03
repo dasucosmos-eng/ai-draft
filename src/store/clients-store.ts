@@ -53,6 +53,7 @@ export interface Client {
 
 interface ClientsState {
   clients: Client[]
+  _clientsUid: string | null
   addClient: (client: Client) => void
   updateClient: (id: string, updates: Partial<Client>) => void
   deleteClient: (id: string) => void
@@ -65,7 +66,11 @@ export const useClientsStore = create<ClientsState>()(
   persist(
     (set) => ({
       clients: [],
-      addClient: (client) => set((state) => ({ clients: [client, ...state.clients] })),
+      _clientsUid: null,
+      addClient: (client) => {
+        const currentUid = localStorage.getItem('aidraft_current_uid')
+        set((state) => ({ clients: [client, ...state.clients], _clientsUid: currentUid }))
+      },
       updateClient: (id, updates) => set((state) => ({
         clients: state.clients.map((c) =>
           c.id === id ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c
@@ -101,14 +106,24 @@ export const useClientsStore = create<ClientsState>()(
     {
       name: 'aidraft_clients',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ clients: state.clients }),
+      partialize: (state) => ({ clients: state.clients, _clientsUid: state._clientsUid }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
-        // CRITICAL: Wipe clients on rehydration to prevent cross-user contamination.
-        // Clients will be reloaded from Firestore via loadClientsFromFirestore().
-        // Without this, logging in as a different user would briefly show the
-        // previous user's client list.
-        state.clients = []
+        // CRITICAL FIX: Only wipe clients if a DIFFERENT user logged in.
+        // Previously, we ALWAYS wiped on rehydration, meaning if Firestore load
+        // failed (network error, 401), the client list was lost entirely.
+        // Now: keep localStorage data as fallback. Only wipe if UID mismatch.
+        const currentUid = localStorage.getItem('aidraft_current_uid')
+        if (state._clientsUid && currentUid && state._clientsUid !== currentUid) {
+          console.warn(
+            `[clients-store] UID mismatch! localStorage has uid=${state._clientsUid} but current user is uid=${currentUid}.`,
+            'Wiping stale clients to prevent cross-user contamination.'
+          )
+          state.clients = []
+          state._clientsUid = currentUid
+        }
+        // Same user or first login — KEEP localStorage clients as fallback.
+        // They will be updated by loadClientsFromFirestore() if Firestore has newer data.
       },
     }
   )
