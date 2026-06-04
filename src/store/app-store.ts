@@ -2,6 +2,75 @@ import { create } from 'zustand';
 import type { CaseItem, DocumentItem, TaskItem, TimelineEvent, InvoiceItem, ChatMessage, UserDataPayload } from '@/lib/types';
 import { apiCall, getAuthToken, getCurrentUid } from '@/lib/api-client';
 
+/* ─── Debounced save: batches all mutations into one Firestore write ─── */
+let _saveTimer: ReturnType<typeof setTimeout> | null = null;
+let _saveInProgress = false;
+
+async function flushSaveToFirestore() {
+  if (_saveInProgress) {
+    // If a save is already running, re-schedule after it completes
+    _saveTimer = setTimeout(flushSaveToFirestore, 500);
+    return;
+  }
+
+  // Clear any pending debounce timer
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
+
+  const { useAppStore } = await import('./app-store');
+  const state = useAppStore.getState();
+  const token = getAuthToken();
+  const uid = getCurrentUid();
+  if (!token || !uid) return;
+
+  _saveInProgress = true;
+  try {
+    const { useProfileStore } = await import('@/store/profile-store');
+    const { useClientsStore } = await import('@/store/clients-store');
+    const { useSubscriptionStore } = await import('@/store/subscription-store');
+
+    const profile = useProfileStore.getState().profile;
+    const clients = useClientsStore.getState().clients;
+    const subscription = useSubscriptionStore.getState().subscription;
+
+    const res = await apiCall('/user-data', {
+      action: 'save',
+      uid,
+      data: {
+        cases: state.cases,
+        documents: state.documents,
+        tasks: state.tasks,
+        timelineEvents: state.timelineEvents,
+        invoices: state.invoices,
+        clients,
+        profile,
+        chatMessages: state.chatMessages,
+        subscription,
+      },
+    }, token);
+
+    if (res.warning) {
+      console.warn('Firestore save warning:', res.warning);
+    }
+  } catch (err) {
+    console.error('Failed to save to Firestore:', err);
+    // Retry once after 3 seconds
+    _saveTimer = setTimeout(flushSaveToFirestore, 3000);
+  } finally {
+    _saveInProgress = false;
+  }
+}
+
+function debouncedSave(delay = 1000) {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(flushSaveToFirestore, delay);
+}
+
+// Also expose for clients-store to use
+export { debouncedSave, flushSaveToFirestore };
+
 interface AppState {
   currentView: string;
   selectedCaseId: string | null;
@@ -70,90 +139,90 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCases: (cases) => set({ cases }),
   addCase: (c) => {
     set((s) => ({ cases: [c, ...s.cases] }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   updateCase: (id, updates) => {
     set((s) => ({
       cases: s.cases.map((c) => (c.id === id ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c)),
     }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   deleteCase: (id) => {
     set((s) => ({ cases: s.cases.filter((c) => c.id !== id) }));
-    get().saveToFirestore();
+    debouncedSave();
   },
 
   setDocuments: (docs) => set({ documents: docs }),
   addDocument: (d) => {
     set((s) => ({ documents: [d, ...s.documents] }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   updateDocument: (id, updates) => {
     set((s) => ({
       documents: s.documents.map((d) => (d.id === id ? { ...d, ...updates } : d)),
     }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   deleteDocument: (id) => {
     set((s) => ({ documents: s.documents.filter((d) => d.id !== id) }));
-    get().saveToFirestore();
+    debouncedSave();
   },
 
   setTasks: (tasks) => set({ tasks }),
   addTask: (t) => {
     set((s) => ({ tasks: [t, ...s.tasks] }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   updateTask: (id, updates) => {
     set((s) => ({
       tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)),
     }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   deleteTask: (id) => {
     set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }));
-    get().saveToFirestore();
+    debouncedSave();
   },
 
   setTimelineEvents: (events) => set({ timelineEvents: events }),
   addTimelineEvent: (e) => {
     set((s) => ({ timelineEvents: [e, ...s.timelineEvents] }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   updateTimelineEvent: (id, updates) => {
     set((s) => ({
       timelineEvents: s.timelineEvents.map((ev) => (ev.id === id ? { ...ev, ...updates } : ev)),
     }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   deleteTimelineEvent: (id) => {
     set((s) => ({ timelineEvents: s.timelineEvents.filter((ev) => ev.id !== id) }));
-    get().saveToFirestore();
+    debouncedSave();
   },
 
   setInvoices: (invoices) => set({ invoices }),
   addInvoice: (inv) => {
     set((s) => ({ invoices: [inv, ...s.invoices] }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   updateInvoice: (id, updates) => {
     set((s) => ({
       invoices: s.invoices.map((inv) => (inv.id === id ? { ...inv, ...updates } : inv)),
     }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   deleteInvoice: (id) => {
     set((s) => ({ invoices: s.invoices.filter((inv) => inv.id !== id) }));
-    get().saveToFirestore();
+    debouncedSave();
   },
 
   addChatMessage: (m) => {
     set((s) => ({ chatMessages: [...s.chatMessages, m] }));
-    get().saveToFirestore();
+    debouncedSave();
   },
   clearChat: () => {
     set({ chatMessages: [] });
-    get().saveToFirestore();
+    debouncedSave();
   },
 
   loadFromFirestoreData: (data) => {
@@ -182,38 +251,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  // Immediate save (used by logout, etc.)
   saveToFirestore: async () => {
-    const state = get();
-    const token = getAuthToken();
-    const uid = getCurrentUid();
-    if (!token || !uid) return;
-
-    try {
-      const { useProfileStore } = await import('@/store/profile-store');
-      const { useClientsStore } = await import('@/store/clients-store');
-      const { useSubscriptionStore } = await import('@/store/subscription-store');
-
-      const profile = useProfileStore.getState().profile;
-      const clients = useClientsStore.getState().clients;
-      const subscription = useSubscriptionStore.getState().subscription;
-
-      await apiCall('/user-data', {
-        action: 'save',
-        uid,
-        data: {
-          cases: state.cases,
-          documents: state.documents,
-          tasks: state.tasks,
-          timelineEvents: state.timelineEvents,
-          invoices: state.invoices,
-          clients,
-          profile,
-          chatMessages: state.chatMessages,
-          subscription,
-        },
-      }, token);
-    } catch (err) {
-      console.error('Failed to save to Firestore:', err);
-    }
+    await flushSaveToFirestore();
   },
 }));

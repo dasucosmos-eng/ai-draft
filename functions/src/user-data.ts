@@ -143,37 +143,37 @@ const handler = async (req: Request, res: Response) => {
         const existingDoc = await userDataRef(uid).get();
         const existing = existingDoc.exists ? existingDoc.data() : {};
 
-        // ANTI-DATA-LOSS: If the incoming save has ALL arrays empty AND
-        // the existing Firestore doc has real data, REJECT the save to prevent
-        // empty data from overwriting real data. This can happen when a
-        // heartbeat fires before loadFromFirestore completes, or when
-        // beforeunload sends stale empty state.
-        const incomingArrays = [cases, documents, tasks, timelineEvents, invoices].filter(
-          (arr) => Array.isArray(arr)
-        );
-        const allIncomingEmpty = incomingArrays.length > 0 && incomingArrays.every(
-          (arr) => arr.length === 0
-        );
-        const existingHasCases = (existing.cases?.length || 0) > 0;
-        const existingHasDocs = (existing.documents?.length || 0) > 0;
-        const existingHasTasks = (existing.tasks?.length || 0) > 0;
-        const existingHasEvents = (existing.timelineEvents?.length || 0) > 0;
-        const existingHasInvoices = (existing.invoices?.length || 0) > 0;
-        const existingHasData =
-          existingHasCases || existingHasDocs || existingHasTasks ||
-          existingHasEvents || existingHasInvoices;
+        // ANTI-DATA-LOSS: Only block if ALL fields (including clients, profile, chatMessages)
+        // are empty/undefined AND existing Firestore doc has real data.
+        // This prevents blocking legitimate saves that have clients but empty cases
+        // (e.g., when addClient fires before addCase).
+        const hasIncomingData =
+          (Array.isArray(clients) && clients.length > 0) ||
+          (Array.isArray(cases) && cases.length > 0) ||
+          (Array.isArray(documents) && documents.length > 0) ||
+          (Array.isArray(tasks) && tasks.length > 0) ||
+          (Array.isArray(timelineEvents) && timelineEvents.length > 0) ||
+          (Array.isArray(invoices) && invoices.length > 0) ||
+          (profile && typeof profile === 'object' && Object.keys(profile).length > 0);
 
-        if (allIncomingEmpty && existingHasData) {
-          console.warn(
-            `[user-data] SAVE BLOCKED: incoming save has all empty arrays but`,
-            `Firestore has data (cases:${existing.cases?.length || 0},`,
-            `docs:${existing.documents?.length || 0}, tasks:${existing.tasks?.length || 0}).`,
-            `Preventing data loss.`
-          );
-          return res.json({
-            success: true,
-            warning: "Save blocked: would overwrite existing data with empty data",
-          });
+        if (!hasIncomingData) {
+          const existingHasCases = (existing.cases?.length || 0) > 0;
+          const existingHasDocs = (existing.documents?.length || 0) > 0;
+          const existingHasClients = (existing.clients?.length || 0) > 0;
+          const existingHasData = existingHasCases || existingHasDocs || existingHasClients;
+
+          if (existingHasData) {
+            console.warn(
+              `[user-data] SAVE BLOCKED: incoming save has no data at all but`,
+              `Firestore has data (cases:${existing.cases?.length || 0},`,
+              `docs:${existing.documents?.length || 0}, clients:${existing.clients?.length || 0}).`,
+              `Preventing data loss.`
+            );
+            return res.json({
+              success: true,
+              warning: "Save blocked: would overwrite existing data with empty data",
+            });
+          }
         }
 
         if (cases !== undefined && Array.isArray(cases)) {
