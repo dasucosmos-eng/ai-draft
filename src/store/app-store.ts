@@ -748,14 +748,22 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
   }
 
   // CRITICAL: Before loading from Firestore, update _activeUid to the current user.
-  // This ensures the store knows which user's data it should hold, and on next
-  // hydration (page refresh), it can detect if a different user logged in.
   const currentUid = localStorage.getItem('aidraft_current_uid')
   if (currentUid) {
     useAppStore.getState().setActiveUid(currentUid)
   }
 
-  let needsMigration = false
+  let localHasDataToMigrate = false
+  const localState = useAppStore.getState()
+
+  // Check if localStorage has any data that Firestore doesn't know about
+  if (localState.cases.length > 0 ||
+      localState.documents.length > 0 ||
+      localState.tasks.length > 0 ||
+      localState.timelineEvents.length > 0 ||
+      localState.invoices.length > 0) {
+    localHasDataToMigrate = true
+  }
 
   try {
     const res = await fetch('/api/user-data', {
@@ -766,13 +774,12 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
 
     if (!res.ok) {
       console.error('[app-store] Firestore load HTTP error:', res.status)
-      // Retry once on transient error, but NOT on 401 (auth failure)
-      if (res.status === 401 || retryCount >= 1) {
-        // Don't retry auth failures or after 1 retry
+      // Retry up to 3 times on transient errors, but NOT on 401 (auth failure)
+      if (res.status === 401 || retryCount >= 3) {
         useAppStore.getState().setDataLoaded(true)
         return
       }
-      await new Promise(r => setTimeout(r, 1500))
+      await new Promise(r => setTimeout(r, Math.pow(2, retryCount) * 1000))
       return loadFromFirestore(retryCount + 1)
     }
 
@@ -781,36 +788,39 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       const d = data.data
       const state = useAppStore.getState()
 
+      // FIRESTORE IS THE SOURCE OF TRUTH.
+      // Always overwrite local data with Firestore data.
+      // The server-side save action does smart merge (by ID), so data from
+      // other browsers is preserved. Local-only data is kept via migration.
+      
+      // Replace local data with Firestore data (sanitized)
       if (d.cases && d.cases.length > 0) {
         state.setCases(sanitizeCases(d.cases))
-      } else if (state.cases.length > 0) {
-        // MIGRATION: local has cases but Firestore doesn't — push them up
-        console.log('[app-store] Migrating', state.cases.length, 'local cases to Firestore')
-        needsMigration = true
+      } else if (localHasDataToMigrate && state.cases.length > 0) {
+        // Firestore has no cases but local does — will migrate below
+        console.log('[app-store] Local has', state.cases.length, 'cases not in Firestore — will migrate')
       }
 
       if (d.documents && d.documents.length > 0) {
         state.setDocuments(sanitizeDocuments(d.documents))
-      } else if (state.documents.length > 0) {
-        needsMigration = true
+      } else if (localHasDataToMigrate && state.documents.length > 0) {
+        console.log('[app-store] Local has', state.documents.length, 'documents not in Firestore — will migrate')
       }
 
       if (d.tasks && d.tasks.length > 0) {
         state.setTasks(sanitizeTasks(d.tasks))
-      } else if (state.tasks.length > 0) {
-        needsMigration = true
+      } else if (localHasDataToMigrate && state.tasks.length > 0) {
+        console.log('[app-store] Local has', state.tasks.length, 'tasks not in Firestore — will migrate')
       }
 
       if (d.timelineEvents && d.timelineEvents.length > 0) {
         state.setTimelineEvents(sanitizeTimeline(d.timelineEvents))
-      } else if (state.timelineEvents.length > 0) {
-        needsMigration = true
+      } else if (localHasDataToMigrate && state.timelineEvents.length > 0) {
+        console.log('[app-store] Local has', state.timelineEvents.length, 'events not in Firestore — will migrate')
       }
 
       if (d.invoices && d.invoices.length > 0) {
         state.setInvoices(sanitizeInvoices(d.invoices))
-      } else if (state.invoices.length > 0) {
-        needsMigration = true
       }
 
       console.log('[app-store] Loaded data from Firestore:', {
@@ -819,14 +829,23 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
         tasks: d.tasks?.length || 0,
       })
 
-      // If we detected local-only data, sync it to Firestore now
-      if (needsMigration) {
+      // MIGRATION: Push any local-only data to Firestore
+      // (Data that exists in localStorage but NOT in Firestore)
+      if (localHasDataToMigrate) {
         console.log('[app-store] Running migration — syncing local data to Firestore')
         await syncToFirestore()
       }
     }
   } catch (err) {
     console.error('[app-store] Firestore load error:', err)
+    // On error, retry up to 3 times with backoff
+    if (retryCount < 3) {
+      const delay = Math.pow(2, retryCount) * 1000
+      console.warn(`[app-store] Retrying Firestore load in ${delay}ms (attempt ${retryCount + 1}/3)`)
+      await new Promise(r => setTimeout(r, delay))
+      return loadFromFirestore(retryCount + 1)
+    }
+    console.error('[app-store] All Firestore load retries exhausted — keeping local data')
   }
 
   // ALWAYS mark data as loaded, even on failure — prevents infinite loading

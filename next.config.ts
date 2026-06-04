@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "export",
   trailingSlash: true,
+  turbopack: {
+    root: '/home/z/my-project/ai-draft',
+  },
   images: {
     unoptimized: true,
   },

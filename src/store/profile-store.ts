@@ -53,12 +53,6 @@ export const useProfileStore = create<ProfileState>()(
       partialize: (state) => ({ profile: state.profile, _profileUid: state._profileUid }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
-        // CRITICAL FIX: Only wipe profile if a DIFFERENT user logged in.
-        // Previously, we ALWAYS reset on rehydration, which meant:
-        // 1. Profile was wiped from localStorage
-        // 2. Firestore load had to succeed to restore it
-        // 3. If Firestore load failed (network error, timeout, 401), profile was lost → popup every refresh
-        // Now: keep localStorage data as fallback. Only reset if UID mismatch.
         const currentUid = localStorage.getItem('aidraft_current_uid')
         if (state._profileUid && currentUid && state._profileUid !== currentUid) {
           // Different user logged in — wipe to prevent cross-user contamination
@@ -91,7 +85,7 @@ export async function saveProfileToFirestore(profile: any): Promise<boolean> {
   try {
     const res = await fetch('/api/user-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: 'saveProfile', profile }),
     })
     if (!res.ok) {
@@ -114,13 +108,22 @@ function debouncedProfileSync(profile: any): void {
     try {
       await fetch('/api/user-data', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ action: 'saveProfile', profile }),
       })
     } catch { /* silent */ }
   }, 1500)
 }
 
+/**
+ * Load profile from Firestore.
+ *
+ * FIRESTORE IS THE SOURCE OF TRUTH.
+ * - If Firestore has a complete profile → ALWAYS use it (overwrite local)
+ * - If Firestore has a partial profile (has fullName) and local is empty → use Firestore
+ * - If Firestore is empty but local has data → push local to Firestore (migration)
+ * - On any error → keep whatever is in localStorage as fallback
+ */
 export async function loadProfileFromFirestore(): Promise<ProfileData | null> {
   const token = localStorage.getItem('aidraft_auth_token')
   const store = useProfileStore.getState()
@@ -130,7 +133,7 @@ export async function loadProfileFromFirestore(): Promise<ProfileData | null> {
   try {
     const res = await fetch('/api/user-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: 'load' }),
     })
     if (!res.ok) {
@@ -143,19 +146,21 @@ export async function loadProfileFromFirestore(): Promise<ProfileData | null> {
       const remote = data.data.profile
       const local = store.profile
 
-      // CRITICAL: Only overwrite local profile if local is empty/default.
-      // If the user has already filled profile (in this session or previous),
-      // the local data is authoritative. Firestore data is stale or equal.
-      // This prevents: user edits name → Firestore loads old name → name reverts.
-      if (remote.isComplete && !local.isComplete) {
-        // Local is empty, remote has data — use remote
+      // FIRESTORE IS AUTHORITATIVE when it has a complete profile.
+      // Always overwrite local with Firestore data, regardless of what
+      // localStorage has. This ensures consistency across browsers/devices.
+      if (remote.isComplete) {
         store.setProfile(remote)
-        console.log('[profile-store] Loaded complete profile from Firestore (local was empty)')
-      } else if (!local.isComplete && !local.fullName && remote.fullName) {
-        // Local has no name, remote has partial data — use remote
+        console.log('[profile-store] Loaded complete profile from Firestore (authoritative)')
+      } else if (remote.fullName && !local.isComplete) {
+        // Firestore has partial data, local is empty — use Firestore
         store.setProfile(remote)
         console.log('[profile-store] Loaded partial profile from Firestore')
-      } else if (local.isComplete && !remote.isComplete) {
+      } else if (remote.fullName && local.isComplete && !local.fullName) {
+        // Local claims complete but is actually empty — use Firestore
+        store.setProfile(remote)
+        console.log('[profile-store] Local was incomplete, using Firestore')
+      } else if (!remote.isComplete && local.isComplete) {
         // LOCAL has complete profile but Firestore doesn't — PUSH IT UP
         console.log('[profile-store] Local profile complete but Firestore empty — uploading migration')
         await saveProfileToFirestore(local)
