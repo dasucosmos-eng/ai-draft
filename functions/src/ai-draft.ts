@@ -53,24 +53,52 @@ export const apiAiDraft = https.onRequest(
         return;
       }
       try {
-        const { caseType, documentType, details, caseContext } = req.body;
-        if (!documentType || !details) {
-          res.status(400).json({
-            error: "documentType and details are required.",
-          });
+        const { caseType, documentType, details, caseContext, extractedText, task, ...fields } = req.body;
+        
+        // Accept either documentType or task
+        const docType = documentType || task || '';
+        if (!docType) {
+          res.status(400).json({ error: "documentType or task is required." });
           return;
         }
 
         // Derive caseType from documentType if not provided
-        const resolvedCaseType = caseType || documentType;
+        const resolvedCaseType = caseType || docType;
+
+        // Build details from individual fields if `details` not provided
+        // DraftingView sends fields like: plaintiffName, defendantName, firNumber, etc.
+        let resolvedDetails = details || '';
+        if (!resolvedDetails && Object.keys(fields).length > 0) {
+          // Filter out empty/null/undefined fields, build a readable summary
+          const fieldEntries = Object.entries(fields)
+            .filter(([k, v]) => v && typeof v === 'string' && v.trim())
+            .map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}: ${v}`);
+          if (fieldEntries.length > 0) {
+            resolvedDetails = fieldEntries.join('\n');
+          }
+        }
+
+        // Fallback: if still no details, use extractedText
+        if (!resolvedDetails && extractedText) {
+          resolvedDetails = extractedText.substring(0, 5000);
+        }
+
+        if (!resolvedDetails) {
+          res.status(400).json({ error: "Provide document details (details, form fields, or extractedText)." });
+          return;
+        }
 
         let userPrompt = `Draft a legal document with the following details:
 
 **Case Type:** ${resolvedCaseType}
-**Document Type:** ${documentType}
+**Document Type:** ${docType}
 
 **Case/Transaction Details:**
-${details}`;
+${resolvedDetails}`;
+
+        if (extractedText && extractedText !== resolvedDetails) {
+          userPrompt += `\n\n**Original Document Text:**\n${extractedText.substring(0, 5000)}`;
+        }
 
         if (caseContext) {
           userPrompt += `\n\n**Additional Context:**\n${caseContext}`;
@@ -123,6 +151,10 @@ ${details}`;
         res.json({
           success: true,
           data: data,
+          content: data.content || '',
+          responseText: data.content || '',
+          draft: data.content || '',
+          title: data.title || '',
         });
       } catch (error) {
         console.error("[ai-draft] Error:", error);

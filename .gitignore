@@ -2,3 +2,10 @@ node_modules/
 .next/
 .firebase/
 out/
+upload/
+download/
+skills/
+*.log
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
