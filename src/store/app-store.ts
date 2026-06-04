@@ -602,9 +602,10 @@ let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let _syncInProgress = false
 let _lastSyncedHash = ''
 let _heartbeatInterval: ReturnType<typeof setInterval> | null = null
-let _heartbeatRegistered = false
+let _heartbeatStarted = false
+let _dataInitialized = false // True ONLY after loadFromFirestore completes
 
-/** Read clients from localStorage directly — avoids circular import with clients-store */
+/** Read clients from localStorage directly — avoids circular import */
 function getClientsFromLocalStorage(): unknown[] {
   try {
     const raw = localStorage.getItem('aidraft_clients')
@@ -652,30 +653,40 @@ function mergeById<T extends { id: string }>(remote: T[], local: T[]): T[] {
 }
 
 /**
- * CRITICAL: Sync ALL user data to Firestore (cases + documents + tasks + timeline + invoices + clients).
- * Includes clients from clients-store via localStorage read to avoid circular imports.
- * Retries up to 3 times on failure.
+ * Sync ALL user data to Firestore (cases + documents + tasks + timeline + invoices + clients).
+ * GUARD: Only syncs after data has been initialized (loadFromFirestore completed).
+ * This prevents the heartbeat from sending EMPTY data before load completes.
  */
 export async function syncToFirestore(retryCount = 0): Promise<boolean> {
   const token = localStorage.getItem('aidraft_auth_token')
   if (!token || _syncInProgress) return false
+  // CRITICAL GUARD: Don't sync until data is loaded from Firestore.
+  // Without this, the heartbeat could send empty data and overwrite Firestore.
+  if (!_dataInitialized) return false
 
   _syncInProgress = true
   try {
     const state = useAppStore.getState()
     const clients = getClientsFromLocalStorage()
+    const payload = {
+      action: 'save',
+      cases: state.cases,
+      documents: state.documents,
+      tasks: state.tasks,
+      timelineEvents: state.timelineEvents,
+      invoices: state.invoices,
+      clients,
+    }
+    console.log('[app-store] Syncing to Firestore:', {
+      cases: state.cases.length,
+      docs: state.documents.length,
+      clients: Array.isArray(clients) ? clients.length : 0,
+      retry: retryCount,
+    })
     const res = await fetch('/api/user-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        action: 'save',
-        cases: state.cases,
-        documents: state.documents,
-        tasks: state.tasks,
-        timelineEvents: state.timelineEvents,
-        invoices: state.invoices,
-        clients, // Include clients in unified sync
-      }),
+      body: JSON.stringify(payload),
     })
     if (!res.ok) {
       console.error('[app-store] Sync HTTP error:', res.status)
@@ -729,7 +740,8 @@ export async function flushSyncToFirestore(): Promise<void> {
  * Layer 2: Periodic heartbeat (15s) — catches any data that missed the debounce
  * Layer 3: beforeunload sendBeacon — absolute last resort when closing tab
  *
- * Additional: visibilitychange flushes on tab hide, syncs on tab visible.
+ * CRITICAL FIX: Heartbeat only starts AFTER data is initialized.
+ * Before initialization, syncs are suppressed to prevent sending empty data.
  */
 let _unloadRegistered = false
 
@@ -741,6 +753,7 @@ export function setupSyncOnUnload(): void {
   const handler = () => {
     const token = localStorage.getItem('aidraft_auth_token')
     if (!token) return
+    // Only send if data was loaded at least once
     const currentHash = computeDataHash()
     if (currentHash !== _lastSyncedHash) {
       const state = useAppStore.getState()
@@ -785,20 +798,26 @@ export function setupSyncOnUnload(): void {
     }
   }
   document.addEventListener('visibilitychange', visibilityHandler)
+}
 
-  // LAYER 2: Periodic heartbeat — every 15s, sync any unsynced data
-  if (!_heartbeatRegistered) {
-    _heartbeatRegistered = true
-    _heartbeatInterval = setInterval(() => {
-      const token = localStorage.getItem('aidraft_auth_token')
-      if (!token) return
-      const currentHash = computeDataHash()
-      if (currentHash && currentHash !== _lastSyncedHash && !_syncInProgress) {
-        console.log('[app-store] Heartbeat: syncing unsynced data')
-        syncToFirestore().catch(() => {})
-      }
-    }, 15000)
-  }
+/**
+ * Start the heartbeat AFTER data is loaded from Firestore.
+ * Called at the end of loadFromFirestore().
+ * This prevents the race condition where heartbeat sends empty data
+ * before loadFromFirestore completes.
+ */
+function startHeartbeat(): void {
+  if (_heartbeatStarted || typeof window === 'undefined') return
+  _heartbeatStarted = true
+  _heartbeatInterval = setInterval(() => {
+    const token = localStorage.getItem('aidraft_auth_token')
+    if (!token || !_dataInitialized) return
+    const currentHash = computeDataHash()
+    if (currentHash && currentHash !== _lastSyncedHash && !_syncInProgress) {
+      console.log('[app-store] Heartbeat: syncing unsynced data')
+      syncToFirestore().catch(() => {})
+    }
+  }, 15000)
 }
 
 export async function loadFromFirestore(retryCount = 0): Promise<void> {
@@ -846,7 +865,6 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       const d = data.data
       const state = useAppStore.getState()
 
-      // FIRESTORE IS THE SOURCE OF TRUTH
       if (d.cases && d.cases.length > 0) {
         state.setCases(sanitizeCases(d.cases))
       } else if (localHasDataToMigrate && state.cases.length > 0) {
@@ -879,17 +897,23 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
         cases: d.cases?.length || 0,
         documents: d.documents?.length || 0,
         tasks: d.tasks?.length || 0,
+        clients: d.clients?.length || 0,
       })
 
       // MIGRATION: Push any local-only data to Firestore
       if (localHasDataToMigrate) {
         console.log('[app-store] Running migration — syncing local data to Firestore')
+        _dataInitialized = true // Allow sync during migration
         await syncToFirestore()
       }
-
-      // Update hash after successful load so heartbeat doesn't re-sync
-      _lastSyncedHash = computeDataHash()
     }
+
+    // CRITICAL: Mark data as initialized and compute baseline hash
+    // This enables the heartbeat WITHOUT race conditions
+    _dataInitialized = true
+    _lastSyncedHash = computeDataHash()
+    startHeartbeat()
+    console.log('[app-store] Data initialized, heartbeat started')
   } catch (err) {
     console.error('[app-store] Firestore load error:', err)
     if (retryCount < 3) {
@@ -899,6 +923,10 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       return loadFromFirestore(retryCount + 1)
     }
     console.error('[app-store] All Firestore load retries exhausted — keeping local data')
+    // Even on failure, mark as initialized so edits can sync
+    _dataInitialized = true
+    _lastSyncedHash = computeDataHash()
+    startHeartbeat()
   }
 
   useAppStore.getState().setDataLoaded(true)

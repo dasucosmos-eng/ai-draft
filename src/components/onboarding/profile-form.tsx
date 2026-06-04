@@ -151,30 +151,32 @@ export function ProfileForm() {
       }
       setProfile(profileData)
 
-      // CRITICAL: Immediately save profile to Firestore (not debounced)
+      // CRITICAL: Immediately save profile to Firestore (not debounced).
       // This ensures the profile persists across browsers and sessions.
-      // Without this, if the user closes the browser within 1.5s,
-      // the profile only exists in localStorage of this browser.
-      await saveProfileToFirestore(profileData)
+      // If save FAILS after all retries, keep form OPEN so user knows.
+      const saved = await saveProfileToFirestore(profileData)
+      if (!saved) {
+        console.error('[profile-form] Profile save to Firestore FAILED — keeping form open')
+        // Don't close the form — data is only in localStorage, not Firestore
+        return
+      }
 
-      // Fire CRM sync
+      // Fire CRM sync (non-blocking, best effort)
       const user = useAuthStore.getState().user
-      try {
-        await fetch('/api/crm-sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            uid: user?.uid || '',
-            email: formData.email || user?.email || '',
-            displayName: formData.fullName || user?.displayName || '',
-            phoneNumber: formData.phone || user?.phoneNumber || '',
-            photoURL: user?.photoURL || '',
-            provider: user?.provider || 'profile-form',
-            createdAt: new Date().toISOString(),
-            source: 'aidraft-bond',
-          }),
-        })
-      } catch { /* CRM sync is silent */ }
+      fetch('/api/crm-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uid: user?.uid || '',
+          email: formData.email || user?.email || '',
+          displayName: formData.fullName || user?.displayName || '',
+          phoneNumber: formData.phone || user?.phoneNumber || '',
+          photoURL: user?.photoURL || '',
+          provider: user?.provider || 'profile-form',
+          createdAt: new Date().toISOString(),
+          source: 'aidraft-bond',
+        }),
+      }).catch(() => {})
 
       setOpen(false)
     } finally {
