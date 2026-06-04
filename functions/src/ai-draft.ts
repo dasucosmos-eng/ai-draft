@@ -7,9 +7,6 @@ import { aiFunctionSecrets } from "./secrets";
 import { https } from "firebase-functions/v2";
 import { restrictedCors } from "./cors";
 import { stripMarkdownFromData } from "./utils";
-import { callSarvamStructured } from "./sarvam-client";
-import { callGroqStructured, logUsage } from "./groq-client";
-import { callGeminiText } from "./gemini-client";
 
 const corsHandler = restrictedCors;
 
@@ -38,8 +35,67 @@ const JSON_STRUCTURE = `{
   "title": "Short title of the document (e.g., 'Plaint for Specific Performance', 'Rental Agreement')",
   "content": "Full document text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level document title headings like IN THE HIGH COURT OF..., COMPLAINT, PLAINT, PETITION, WRIT PETITION, AFFIDAVIT, VERIFICATION, VAKALATNAMA, and PRAYER. Section sub-headings should be in Title Case (e.g., 'Facts of the Case', 'Grounds for Relief'). Use numbered sections like 1., 2., 3., sub-sections like (a), (b), (c), and proper paragraph breaks. The document must be court-ready and clean without any markdown syntax like **, ##, or #.",
   "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
-  "warnings": ["Important warning or disclaimer 1", "Important warning 2"]
+  "warnings": ["Important warning or disclaimer 1", "Important warning or disclaimer 2"]
 }`;
+
+// ─── Unified AI call with retry and fallback ──────────────────────────
+
+async function callAIWithRetry(
+  systemPrompt: string,
+  userPrompt: string,
+  maxRetries: number = 2
+): Promise<{ title: string; content: string; keyPoints: string[]; warnings: string[] }> {
+  // Dynamic imports to avoid circular deps
+  const { callSarvamStructured } = await import("./sarvam-client");
+  const { callGroqStructured } = await import("./groq-client");
+  const { callGeminiText } = await import("./gemini-client");
+
+  const providers = [
+    { name: "Sarvam", fn: () => callSarvamStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-105b") },
+    { name: "Groq", fn: () => callGroqStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3) },
+    { name: "Gemini", fn: async () => {
+      const geminiPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON:\n${JSON_STRUCTURE}`;
+      const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+      const cleaned = geminiResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      return jsonMatch ? JSON.parse(jsonMatch[0]) : {
+        title: "Legal Document",
+        content: geminiResponse,
+        keyPoints: [],
+        warnings: ["AI-generated document — please review before filing."],
+      };
+    }},
+  ];
+
+  for (const provider of providers) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[ai-draft] Trying ${provider.name} (attempt ${attempt}/${maxRetries})`);
+        const data = await provider.fn();
+        console.log(`[ai-draft] Success via ${provider.name}`);
+        return data;
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        const isRetryable = errMsg.includes("403") || errMsg.includes("429") ||
+                           errMsg.includes("rate_limit") || errMsg.includes("quota") ||
+                           errMsg.includes("timeout") || errMsg.includes("ECONNRESET");
+
+        console.error(`[ai-draft] ${provider.name} failed (attempt ${attempt}): ${errMsg.substring(0, 200)}`);
+
+        if (isRetryable && attempt < maxRetries) {
+          // Exponential backoff: 2s, 4s
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`[ai-draft] Retrying ${provider.name} in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        break; // Move to next provider
+      }
+    }
+  }
+
+  throw new Error("All AI providers are currently unavailable. Please try again in a few minutes.");
+}
 
 export const apiAiDraft = https.onRequest(
   {
@@ -66,10 +122,8 @@ export const apiAiDraft = https.onRequest(
         const resolvedCaseType = caseType || docType;
 
         // Build details from individual fields if `details` not provided
-        // DraftingView sends fields like: plaintiffName, defendantName, firNumber, etc.
         let resolvedDetails = details || '';
         if (!resolvedDetails && Object.keys(fields).length > 0) {
-          // Filter out empty/null/undefined fields, build a readable summary
           const fieldEntries = Object.entries(fields)
             .filter(([k, v]) => v && typeof v === 'string' && v.trim())
             .map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}: ${v}`);
@@ -78,7 +132,6 @@ export const apiAiDraft = https.onRequest(
           }
         }
 
-        // Fallback: if still no details, use extractedText
         if (!resolvedDetails && extractedText) {
           resolvedDetails = extractedText.substring(0, 5000);
         }
@@ -106,55 +159,18 @@ ${resolvedDetails}`;
 
         userPrompt += `\n\nDraft a complete, court-ready document. Include all standard clauses, recitals, and formatting. The document should be ready for filing or execution with minimal editing.`;
 
-        let data: {
-          title: string;
-          content: string;
-          keyPoints: string[];
-          warnings: string[];
-        };
-        try {
-          data = await callSarvamStructured<{
-            title: string;
-            content: string;
-            keyPoints: string[];
-            warnings: string[];
-          }>(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-105b");
-        } catch (sarvamErr) {
-          console.error("[ai-draft] Sarvam failed, falling back to Groq:", sarvamErr?.message);
-          try {
-            data = await callGroqStructured<{
-              title: string;
-              content: string;
-              keyPoints: string[];
-              warnings: string[];
-            }>(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3);
-          } catch (groqErr) {
-            console.error("[ai-draft] Groq failed, falling back to Gemini:", groqErr?.message);
-            const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${JSON_STRUCTURE}`;
-            const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
-            const cleaned = geminiResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-            data = jsonMatch ? JSON.parse(jsonMatch[0]) : {
-              title: "Legal Document",
-              content: geminiResponse,
-              keyPoints: [],
-              warnings: ["AI-generated document — please review before filing."],
-            };
-          }
-        }
-
-        logUsage("ai-draft", undefined, 3000);
+        const data = await callAIWithRetry(SYSTEM_PROMPT, userPrompt);
 
         // Strip any markdown that AI might still produce
-        data = stripMarkdownFromData(data);
+        const cleanData = stripMarkdownFromData(data);
 
         res.json({
           success: true,
-          data: data,
-          content: data.content || '',
-          responseText: data.content || '',
-          draft: data.content || '',
-          title: data.title || '',
+          data: cleanData,
+          content: cleanData.content || '',
+          responseText: cleanData.content || '',
+          draft: cleanData.content || '',
+          title: cleanData.title || '',
         });
       } catch (error) {
         console.error("[ai-draft] Error:", error);

@@ -305,7 +305,15 @@ export function AiIntakeView() {
         setStage('drafting');
         setProgressLabel(`Generating ${data.suggestedDocuments.length} documents...`);
         
-        const draftPromises = data.suggestedDocuments.map(async (doc, idx) => {
+        // Draft documents SEQUENTIALLY with 3s delay between each
+        // to avoid hitting API rate limits
+        const completedDrafts: GeneratedDraft[] = [];
+        for (let idx = 0; idx < data.suggestedDocuments.length; idx++) {
+          const doc = data.suggestedDocuments[idx];
+          if (idx > 0) {
+            // Wait 3 seconds between documents to avoid rate limits
+            await new Promise(r => setTimeout(r, 3000));
+          }
           try {
             setProgress(85 + Math.floor(((idx + 1) / data.suggestedDocuments.length) * 15));
             setProgressLabel(`Drafting: ${doc.name} (${idx + 1}/${data.suggestedDocuments.length})`);
@@ -354,15 +362,13 @@ export function AiIntakeView() {
               createdAt: new Date().toISOString(),
             });
 
-            return { name: doc.name, type: doc.type || 'draft', content, status: 'done' as const };
+            completedDrafts.push({ name: doc.name, type: doc.type || 'draft', content, status: 'done' as const });
           } catch (err) {
             console.error(`Failed to draft ${doc.name}:`, err);
-            return { name: doc.name, type: doc.type || 'draft', content: `Failed to generate: ${err}`, status: 'error' as const };
+            completedDrafts.push({ name: doc.name, type: doc.type || 'draft', content: `Failed to generate: ${err}`, status: 'error' as const });
           }
-        });
-
-        const completedDrafts = await Promise.all(draftPromises);
-        setDrafts(completedDrafts);
+        }
+        setDrafts([...completedDrafts]);
       }
 
       setProgress(100);
