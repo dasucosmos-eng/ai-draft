@@ -134,7 +134,7 @@ const handler = async (req: Request, res: Response) => {
 
       case "save": {
         // Smart merge — arrays are merged by ID (upsert), scalars are replaced
-        const { profile, cases, documents, tasks, timelineEvents, invoices, clients, chatMessages } = req.body || {};
+        const { profile, cases, documents, tasks, timelineEvents, invoices, clients, chatMessages, subscription } = req.body || {};
         const updateData: Record<string, any> = {};
         if (profile !== undefined) updateData.profile = profile;
 
@@ -154,6 +154,8 @@ const handler = async (req: Request, res: Response) => {
         } else if (clients === undefined && existing.clients) {
           // Don't overwrite existing clients if none sent
         }
+
+        if (subscription !== undefined) updateData.subscription = subscription;
 
         // ANTI-DATA-LOSS: Only block if ALL fields (including clients, profile, chatMessages)
         // are empty/undefined AND existing Firestore doc has real data.

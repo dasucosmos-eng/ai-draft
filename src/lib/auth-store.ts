@@ -39,14 +39,18 @@ function installPersistenceHandlers() {
       subscription,
     });
 
+    // Use fetch keepalive instead of sendBeacon — reliable Content-Type headers
+    // sendBeacon's Content-Type is unreliable across browsers, causing silent parse failures
     try {
-      navigator.sendBeacon(
-        `${getApiBaseUrl()}/user-data`,
-        new Blob([payload], { type: 'application/json' })
-      );
-      console.log('[persistence] Saved via sendBeacon on page unload');
+      fetch(`${getApiBaseUrl()}/user-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true, // survives page unload, like sendBeacon
+        credentials: 'include',
+      });
     } catch {
-      console.warn('[persistence] sendBeacon failed, data may not be saved');
+      // best effort — browser is unloading
     }
   });
 
@@ -64,13 +68,11 @@ function installPersistenceHandlers() {
     const uid = localStorage.getItem('aidraft_current_uid');
     if (!token || !uid) return;
 
-    console.log('[persistence] Tab visible — flushing unsaved changes then reloading...');
     try {
       // BUG #7: Flush any pending local changes to Firestore FIRST
       const { flushSaveToFirestore } = await import('@/store/app-store');
       if (useAppStore.getState().dataLoaded) {
         await flushSaveToFirestore();
-        console.log('[persistence] ✓ Local changes flushed before reload');
       }
     } catch (err) {
       console.warn('[persistence] Flush before reload failed:', err);
@@ -94,7 +96,6 @@ export async function loadAllUserData(uid: string, token: string): Promise<void>
       useProfileStore.getState().loadProfile(result.data.profile);
       useClientsStore.getState().setClients(result.data.clients || []);
       useSubscriptionStore.getState().setSubscription(result.data.subscription);
-      console.log(`[load] ✓ Loaded ${result.data.cases?.length || 0} cases, ${result.data.clients?.length || 0} clients, ${result.data.documents?.length || 0} docs`);
     } else {
       // New user — no data yet, just mark as loaded
       useAppStore.getState().loadFromFirestoreData({});
@@ -201,7 +202,6 @@ export async function logout(): Promise<void> {
   try {
     const { flushSaveToFirestore, immediateSave } = await import('@/store/app-store');
     await immediateSave(); // Use immediateSave which clears timer + flushes
-    console.log('[logout] Saved pending data before logout');
   } catch (err) {
     console.warn('[logout] Failed to flush before logout:', err);
   }
@@ -231,10 +231,13 @@ export async function logout(): Promise<void> {
     });
 
     try {
-      navigator.sendBeacon(
-        `${getApiBaseUrl()}/user-data`,
-        new Blob([payload], { type: 'application/json' })
-      );
+      fetch(`${getApiBaseUrl()}/user-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+        credentials: 'include',
+      });
     } catch { /* best effort */ }
   }
 

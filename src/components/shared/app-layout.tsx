@@ -164,9 +164,17 @@ export function AppLayout() {
     if (isMobile) setSidebarOpen(false);
   };
 
-  const handleLogout = () => {
-    logout();
-    toast.success('Logged out successfully');
+  const [loggingOut, setLoggingOut] = useState(false);
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await logout();
+      toast.success('Logged out successfully');
+    } catch (err) {
+      console.error('Logout save failed:', err);
+      toast.error('Logged out, but last save may have failed');
+    }
   };
 
   const initials = profile.fullName

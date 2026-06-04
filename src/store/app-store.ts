@@ -23,7 +23,6 @@ async function flushSaveToFirestore() {
 
   // BLOCK saves during initial data load (prevents empty overwrite)
   if (_isLoading) {
-    console.log('[save] Blocked during data load — will retry after load');
     _saveTimer = setTimeout(flushSaveToFirestore, 2000);
     return;
   }
@@ -40,7 +39,6 @@ async function flushSaveToFirestore() {
   if (!token || !uid) return;
   // Don't save if data hasn't been loaded yet
   if (!state.dataLoaded) {
-    console.log('[save] Blocked — data not loaded yet');
     return;
   }
 
@@ -64,16 +62,13 @@ async function flushSaveToFirestore() {
       subscription,
     };
 
-    console.log(`[save] Saving ${state.cases.length} cases, ${clients.length} clients, ${state.documents.length} docs...`);
-
     const res = await apiCall('/user-data', payload, token);
 
     if (res.success && !res.warning) {
-      _retryCount = 0; // Reset retry count on success
-      console.log('[save] ✓ Saved successfully');
+      _retryCount = 0;
     }
     if (res.warning) {
-      console.warn('[save] ⚠ Firestore save warning:', res.warning);
+      console.warn('[save] Firestore save warning:', res.warning);
     }
   } catch (err) {
     console.error('[save] ✗ Failed to save to Firestore:', err);
