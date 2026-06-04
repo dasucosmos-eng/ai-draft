@@ -70,13 +70,20 @@ export const useClientsStore = create<ClientsState>()(
       addClient: (client) => {
         const currentUid = localStorage.getItem('aidraft_current_uid')
         set((state) => ({ clients: [client, ...state.clients], _clientsUid: currentUid }))
+        debouncedClientsSync()
       },
-      updateClient: (id, updates) => set((state) => ({
-        clients: state.clients.map((c) =>
-          c.id === id ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c
-        ),
-      })),
-      deleteClient: (id) => set((state) => ({ clients: state.clients.filter((c) => c.id !== id) })),
+      updateClient: (id, updates) => {
+        set((state) => ({
+          clients: state.clients.map((c) =>
+            c.id === id ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c
+          ),
+        }))
+        debouncedClientsSync()
+      },
+      deleteClient: (id) => {
+        set((state) => ({ clients: state.clients.filter((c) => c.id !== id) }))
+        debouncedClientsSync()
+      },
       addDocumentToClient: (clientId, doc) => set((state) => ({
         clients: state.clients.map((c) =>
           c.id === clientId
@@ -109,10 +116,6 @@ export const useClientsStore = create<ClientsState>()(
       partialize: (state) => ({ clients: state.clients, _clientsUid: state._clientsUid }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
-        // CRITICAL FIX: Only wipe clients if a DIFFERENT user logged in.
-        // Previously, we ALWAYS wiped on rehydration, meaning if Firestore load
-        // failed (network error, 401), the client list was lost entirely.
-        // Now: keep localStorage data as fallback. Only wipe if UID mismatch.
         const currentUid = localStorage.getItem('aidraft_current_uid')
         if (state._clientsUid && currentUid && state._clientsUid !== currentUid) {
           console.warn(
@@ -122,34 +125,29 @@ export const useClientsStore = create<ClientsState>()(
           state.clients = []
           state._clientsUid = currentUid
         }
-        // Same user or first login — KEEP localStorage clients as fallback.
-        // They will be updated by loadClientsFromFirestore() if Firestore has newer data.
       },
     }
   )
 )
 
 /* ─── Firestore Sync ─── */
+// Clients sync is now handled by app-store's unified sync.
+// When clients change, we trigger the app-store's debouncedSync which
+// reads clients from localStorage and includes them in the Firestore save.
+// This ensures clients benefit from the same 3-layer protection:
+// (1) debounced sync, (2) periodic heartbeat, (3) beforeunload sendBeacon.
 
 let _clientsSyncTimer: ReturnType<typeof setTimeout> | null = null
-let _prevClientsJson = ''
 
 function debouncedClientsSync(): void {
   if (_clientsSyncTimer) clearTimeout(_clientsSyncTimer)
-  _clientsSyncTimer = setTimeout(syncClientsToFirestore, 2000)
-}
-
-async function syncClientsToFirestore(): Promise<void> {
-  const token = localStorage.getItem('aidraft_auth_token')
-  if (!token) return
-  try {
-    const clients = useClientsStore.getState().clients
-    await fetch('/api/user-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ action: 'save', clients }),
-    })
-  } catch { /* silent */ }
+  _clientsSyncTimer = setTimeout(() => {
+    _clientsSyncTimer = null
+    // Dynamically import app-store's sync to avoid circular dependency at module level
+    import('./app-store').then(({ syncToFirestore }) => {
+      syncToFirestore().catch(() => {})
+    }).catch(() => {})
+  }, 1500) // Slightly faster than app-store's own 2s debounce
 }
 
 export async function loadClientsFromFirestore(): Promise<void> {
@@ -158,26 +156,19 @@ export async function loadClientsFromFirestore(): Promise<void> {
   try {
     const res = await fetch('/api/user-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: 'load' }),
     })
     const data = await res.json()
     if (data.success && data.data?.clients && data.data.clients.length > 0) {
       useClientsStore.setState({ clients: data.data.clients })
-      _prevClientsJson = JSON.stringify(data.data.clients)
       console.log('[clients-store] Loaded clients from Firestore:', data.data.clients.length)
     } else if (useClientsStore.getState().clients.length > 0) {
-      // MIGRATION: local has clients, Firestore doesn't — push them up
+      // MIGRATION: local has clients, Firestore doesn't — push them up via app-store sync
       console.log('[clients-store] Migrating local clients to Firestore')
-      await syncClientsToFirestore()
+      import('./app-store').then(({ syncToFirestore }) => {
+        syncToFirestore().catch(() => {})
+      }).catch(() => {})
     }
   } catch { /* silent */ }
 }
-
-useClientsStore.subscribe((state) => {
-  const json = JSON.stringify(state.clients)
-  if (json !== _prevClientsJson) {
-    _prevClientsJson = json
-    debouncedClientsSync()
-  }
-})

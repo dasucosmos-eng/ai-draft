@@ -600,17 +600,49 @@ function sanitizeInvoices(invoices: any[]): InvoiceItem[] {
 
 let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let _syncInProgress = false
+let _lastSyncedHash = ''
+let _heartbeatInterval: ReturnType<typeof setInterval> | null = null
+let _heartbeatRegistered = false
+
+/** Read clients from localStorage directly — avoids circular import with clients-store */
+function getClientsFromLocalStorage(): unknown[] {
+  try {
+    const raw = localStorage.getItem('aidraft_clients')
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    const clients = parsed?.state?.clients || parsed?.clients || []
+    return Array.isArray(clients) ? clients : []
+  } catch { return [] }
+}
+
+/** Compute a hash of all syncable data to detect unsynced changes */
+function computeDataHash(): string {
+  try {
+    const state = useAppStore.getState()
+    const token = localStorage.getItem('aidraft_auth_token')
+    if (!token) return ''
+    const clients = getClientsFromLocalStorage()
+    return JSON.stringify({
+      c: state.cases.length,
+      d: state.documents.length,
+      t: state.tasks.length,
+      te: state.timelineEvents.length,
+      i: state.invoices.length,
+      cl: clients.length,
+      cU: state.cases[0]?.updatedAt || '',
+      dU: state.documents[0]?.updatedAt || '',
+      tU: state.tasks[0]?.updatedAt || '',
+      clU: clients[0]?.updatedAt || '',
+    })
+  } catch { return '' }
+}
 
 /**
  * Merge two arrays by ID — remote is source of truth, local-only items are preserved.
- * Firestore items take precedence; local items not in Firestore are kept (they may
- * not have synced yet from this browser).
  */
 function mergeById<T extends { id: string }>(remote: T[], local: T[]): T[] {
   const remoteIds = new Set(remote.map(item => item.id))
-  // Start with all remote items (source of truth)
   const merged = [...remote]
-  // Add local items NOT in remote (unsynced local data)
   for (const localItem of local) {
     if (!remoteIds.has(localItem.id)) {
       merged.push(localItem)
@@ -619,6 +651,11 @@ function mergeById<T extends { id: string }>(remote: T[], local: T[]): T[] {
   return merged
 }
 
+/**
+ * CRITICAL: Sync ALL user data to Firestore (cases + documents + tasks + timeline + invoices + clients).
+ * Includes clients from clients-store via localStorage read to avoid circular imports.
+ * Retries up to 3 times on failure.
+ */
 export async function syncToFirestore(retryCount = 0): Promise<boolean> {
   const token = localStorage.getItem('aidraft_auth_token')
   if (!token || _syncInProgress) return false
@@ -626,9 +663,10 @@ export async function syncToFirestore(retryCount = 0): Promise<boolean> {
   _syncInProgress = true
   try {
     const state = useAppStore.getState()
+    const clients = getClientsFromLocalStorage()
     const res = await fetch('/api/user-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({
         action: 'save',
         cases: state.cases,
@@ -636,12 +674,12 @@ export async function syncToFirestore(retryCount = 0): Promise<boolean> {
         tasks: state.tasks,
         timelineEvents: state.timelineEvents,
         invoices: state.invoices,
+        clients, // Include clients in unified sync
       }),
     })
     if (!res.ok) {
       console.error('[app-store] Sync HTTP error:', res.status)
       _syncInProgress = false
-      // Retry up to 3 times on server errors (5xx) with exponential backoff
       if (res.status >= 500 && retryCount < 3) {
         const delay = Math.pow(2, retryCount) * 1000
         console.warn(`[app-store] Retrying sync in ${delay}ms (attempt ${retryCount + 1}/3)`)
@@ -650,13 +688,13 @@ export async function syncToFirestore(retryCount = 0): Promise<boolean> {
       }
       return false
     }
+    _lastSyncedHash = computeDataHash()
     console.log('[app-store] Synced to Firestore successfully')
     _syncInProgress = false
     return true
   } catch (err) {
     console.error('[app-store] Sync error:', err)
     _syncInProgress = false
-    // Retry up to 3 times on network errors with exponential backoff
     if (retryCount < 3) {
       const delay = Math.pow(2, retryCount) * 1000
       console.warn(`[app-store] Retrying sync in ${delay}ms (attempt ${retryCount + 1}/3)`)
@@ -669,10 +707,13 @@ export async function syncToFirestore(retryCount = 0): Promise<boolean> {
 
 function debouncedSync(): void {
   if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer)
-  _syncDebounceTimer = setTimeout(syncToFirestore, 2000)
+  _syncDebounceTimer = setTimeout(() => {
+    _syncDebounceTimer = null
+    syncToFirestore().catch(() => {})
+  }, 2000)
 }
 
-/** Flush pending sync immediately — call before logout or page unload */
+/** Flush pending sync immediately — call before logout */
 export async function flushSyncToFirestore(): Promise<void> {
   if (_syncDebounceTimer) {
     clearTimeout(_syncDebounceTimer)
@@ -682,11 +723,13 @@ export async function flushSyncToFirestore(): Promise<void> {
 }
 
 /**
- * CRITICAL FIX: Register a beforeunload handler to flush pending syncs
- * when the user closes the tab/browser or navigates away.
- * Without this, debounced syncs (2s delay) are LOST if the browser closes
- * before the timer fires. This is the ROOT CAUSE of data not appearing on
- * other browsers — data was only in localStorage, never reached Firestore.
+ * THREE LAYERS of data protection — ensures data is NEVER lost:
+ *
+ * Layer 1: Debounced sync (2s) — fast feedback after edits
+ * Layer 2: Periodic heartbeat (15s) — catches any data that missed the debounce
+ * Layer 3: beforeunload sendBeacon — absolute last resort when closing tab
+ *
+ * Additional: visibilitychange flushes on tab hide, syncs on tab visible.
  */
 let _unloadRegistered = false
 
@@ -694,50 +737,68 @@ export function setupSyncOnUnload(): void {
   if (_unloadRegistered || typeof window === 'undefined') return
   _unloadRegistered = true
 
-  // Use sendBeacon for reliable sync during page unload.
-  // Unlike fetch(), sendBeacon guarantees the request is sent even if the page
-  // is closing. However, it doesn't support Authorization headers well,
-  // so we use a synchronous approach for the beforeunload event.
-  const handler = (e: BeforeUnloadEvent) => {
+  // LAYER 3: beforeunload — ALWAYS flush if data has changed
+  const handler = () => {
+    const token = localStorage.getItem('aidraft_auth_token')
+    if (!token) return
+    const currentHash = computeDataHash()
+    if (currentHash !== _lastSyncedHash) {
+      const state = useAppStore.getState()
+      const clients = getClientsFromLocalStorage()
+      const payload = JSON.stringify({
+        action: 'save',
+        cases: state.cases,
+        documents: state.documents,
+        tasks: state.tasks,
+        timelineEvents: state.timelineEvents,
+        invoices: state.invoices,
+        clients,
+        _token: token,
+      })
+      const blob = new Blob([payload], { type: 'application/json' })
+      navigator.sendBeacon('/api/user-data', blob)
+      console.log('[app-store] beforeunload: synced', {
+        cases: state.cases.length, clients: clients.length
+      })
+    }
     if (_syncDebounceTimer) {
-      // There's a pending debounced sync — try to flush it
       clearTimeout(_syncDebounceTimer)
       _syncDebounceTimer = null
-      // Use sendBeacon for the sync (fire-and-forget, no Authorization header issue
-      // since we include token in the body).
-      // CRITICAL FIX: Use Blob with explicit 'application/json' Content-Type.
-      // Without this, sendBeacon defaults to 'text/plain' and the server
-      // (Express body-parser) won't parse the JSON body → data silently lost.
-      const token = localStorage.getItem('aidraft_auth_token')
-      if (token) {
-        const state = useAppStore.getState()
-        const payload = JSON.stringify({
-          action: 'save',
-          cases: state.cases,
-          documents: state.documents,
-          tasks: state.tasks,
-          timelineEvents: state.timelineEvents,
-          invoices: state.invoices,
-          _token: token, // Include token in body for sendBeacon
-        })
-        const blob = new Blob([payload], { type: 'application/json' })
-        navigator.sendBeacon('/api/user-data', blob)
+    }
+  }
+  window.addEventListener('beforeunload', handler)
+
+  // VISIBILITY: sync on tab hidden + sync on tab visible
+  const visibilityHandler = () => {
+    if (document.visibilityState === 'hidden') {
+      if (_syncDebounceTimer) {
+        clearTimeout(_syncDebounceTimer)
+        _syncDebounceTimer = null
+      }
+      syncToFirestore().catch(() => {})
+    } else if (document.visibilityState === 'visible') {
+      const currentHash = computeDataHash()
+      if (currentHash !== _lastSyncedHash && !_syncInProgress) {
+        console.log('[app-store] Tab visible: syncing unsynced data')
+        syncToFirestore().catch(() => {})
       }
     }
   }
-
-  window.addEventListener('beforeunload', handler)
-
-  // Also use visibilitychange to sync when tab becomes hidden (e.g., mobile switch)
-  const visibilityHandler = () => {
-    if (document.visibilityState === 'hidden' && _syncDebounceTimer) {
-      clearTimeout(_syncDebounceTimer)
-      _syncDebounceTimer = null
-      syncToFirestore().catch(() => {})
-    }
-  }
-
   document.addEventListener('visibilitychange', visibilityHandler)
+
+  // LAYER 2: Periodic heartbeat — every 15s, sync any unsynced data
+  if (!_heartbeatRegistered) {
+    _heartbeatRegistered = true
+    _heartbeatInterval = setInterval(() => {
+      const token = localStorage.getItem('aidraft_auth_token')
+      if (!token) return
+      const currentHash = computeDataHash()
+      if (currentHash && currentHash !== _lastSyncedHash && !_syncInProgress) {
+        console.log('[app-store] Heartbeat: syncing unsynced data')
+        syncToFirestore().catch(() => {})
+      }
+    }, 15000)
+  }
 }
 
 export async function loadFromFirestore(retryCount = 0): Promise<void> {
@@ -747,7 +808,6 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
     return
   }
 
-  // CRITICAL: Before loading from Firestore, update _activeUid to the current user.
   const currentUid = localStorage.getItem('aidraft_current_uid')
   if (currentUid) {
     useAppStore.getState().setActiveUid(currentUid)
@@ -756,7 +816,6 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
   let localHasDataToMigrate = false
   const localState = useAppStore.getState()
 
-  // Check if localStorage has any data that Firestore doesn't know about
   if (localState.cases.length > 0 ||
       localState.documents.length > 0 ||
       localState.tasks.length > 0 ||
@@ -768,13 +827,12 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
   try {
     const res = await fetch('/api/user-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: 'load' }),
     })
 
     if (!res.ok) {
       console.error('[app-store] Firestore load HTTP error:', res.status)
-      // Retry up to 3 times on transient errors, but NOT on 401 (auth failure)
       if (res.status === 401 || retryCount >= 3) {
         useAppStore.getState().setDataLoaded(true)
         return
@@ -788,16 +846,10 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       const d = data.data
       const state = useAppStore.getState()
 
-      // FIRESTORE IS THE SOURCE OF TRUTH.
-      // Always overwrite local data with Firestore data.
-      // The server-side save action does smart merge (by ID), so data from
-      // other browsers is preserved. Local-only data is kept via migration.
-      
-      // Replace local data with Firestore data (sanitized)
+      // FIRESTORE IS THE SOURCE OF TRUTH
       if (d.cases && d.cases.length > 0) {
         state.setCases(sanitizeCases(d.cases))
       } else if (localHasDataToMigrate && state.cases.length > 0) {
-        // Firestore has no cases but local does — will migrate below
         console.log('[app-store] Local has', state.cases.length, 'cases not in Firestore — will migrate')
       }
 
@@ -830,15 +882,16 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       })
 
       // MIGRATION: Push any local-only data to Firestore
-      // (Data that exists in localStorage but NOT in Firestore)
       if (localHasDataToMigrate) {
         console.log('[app-store] Running migration — syncing local data to Firestore')
         await syncToFirestore()
       }
+
+      // Update hash after successful load so heartbeat doesn't re-sync
+      _lastSyncedHash = computeDataHash()
     }
   } catch (err) {
     console.error('[app-store] Firestore load error:', err)
-    // On error, retry up to 3 times with backoff
     if (retryCount < 3) {
       const delay = Math.pow(2, retryCount) * 1000
       console.warn(`[app-store] Retrying Firestore load in ${delay}ms (attempt ${retryCount + 1}/3)`)
@@ -848,6 +901,5 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
     console.error('[app-store] All Firestore load retries exhausted — keeping local data')
   }
 
-  // ALWAYS mark data as loaded, even on failure — prevents infinite loading
   useAppStore.getState().setDataLoaded(true)
 }

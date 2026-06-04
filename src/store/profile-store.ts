@@ -78,8 +78,9 @@ let _profileSyncTimer: ReturnType<typeof setTimeout> | null = null
 /**
  * IMMEDIATELY save profile to Firestore (no debounce).
  * Used on form submit to guarantee the profile is persisted.
+ * Retries up to 3 times on failure with exponential backoff.
  */
-export async function saveProfileToFirestore(profile: any): Promise<boolean> {
+export async function saveProfileToFirestore(profile: any, retryCount = 0): Promise<boolean> {
   const token = localStorage.getItem('aidraft_auth_token')
   if (!token) return false
   try {
@@ -90,12 +91,26 @@ export async function saveProfileToFirestore(profile: any): Promise<boolean> {
     })
     if (!res.ok) {
       console.error('[profile-store] Immediate save failed:', res.status)
+      // Retry on server errors (5xx)
+      if (res.status >= 500 && retryCount < 3) {
+        const delay = Math.pow(2, retryCount) * 1000
+        console.warn(`[profile-store] Retrying save in ${delay}ms (attempt ${retryCount + 1}/3)`)
+        await new Promise(r => setTimeout(r, delay))
+        return saveProfileToFirestore(profile, retryCount + 1)
+      }
       return false
     }
-    console.log('[profile-store] Profile saved to Firestore immediately')
+    console.log('[profile-store] Profile saved to Firestore successfully')
     return true
   } catch (err) {
     console.error('[profile-store] Immediate save error:', err)
+    // Retry on network errors
+    if (retryCount < 3) {
+      const delay = Math.pow(2, retryCount) * 1000
+      console.warn(`[profile-store] Retrying save in ${delay}ms (attempt ${retryCount + 1}/3)`)
+      await new Promise(r => setTimeout(r, delay))
+      return saveProfileToFirestore(profile, retryCount + 1)
+    }
     return false
   }
 }
