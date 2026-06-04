@@ -161,7 +161,27 @@ exports.authGoogleCallback = v2_1.https.onRequest({ timeoutSeconds: 30, region: 
             res.redirect("https://aidraft.bond/?error=no_user_info&error_detail=missing_email_or_id");
             return;
         }
-        const uid = `google_${userInfo.id}`;
+        let uid = `google_${userInfo.id}`;
+        // ACCOUNT LINKING: Check if a user with this email already exists from another
+        // provider (e.g., email signup). If so, use that account's UID to prevent
+        // duplicate Firestore documents with different data for the same person.
+        const db = getDb();
+        if (db) {
+            try {
+                const existingUserQuery = await db.collection("users").where("email", "==", userInfo.email).limit(1).get();
+                if (!existingUserQuery.empty) {
+                    const existingData = existingUserQuery.docs[0].data();
+                    const existingUid = existingData.uid;
+                    if (existingUid && existingUid !== uid) {
+                        console.log(`[auth-google-callback] Account linking: email ${userInfo.email} already exists as uid=${existingUid}, merging with Google uid=${uid}`);
+                        uid = existingUid;
+                    }
+                }
+            }
+            catch (linkErr) {
+                console.warn("[auth-google-callback] Account linking check failed:", linkErr?.message);
+            }
+        }
         const userPayload = {
             uid,
             email: userInfo.email,
@@ -230,7 +250,26 @@ exports.authGoogle = v2_1.https.onRequest({ timeoutSeconds: 30, region: "us-cent
                 res.status(401).json({ error: "Invalid Google credentials" });
                 return;
             }
-            const uid = `google_${payload.sub}`;
+            let uid = `google_${payload.sub}`;
+            // ACCOUNT LINKING: Check if a user with this email already exists from another
+            // provider (e.g., email signup). If so, use that account's UID.
+            const db = getDb();
+            if (db && payload.email) {
+                try {
+                    const existingUserQuery = await db.collection("users").where("email", "==", payload.email).limit(1).get();
+                    if (!existingUserQuery.empty) {
+                        const existingData = existingUserQuery.docs[0].data();
+                        const existingUid = existingData.uid;
+                        if (existingUid && existingUid !== uid) {
+                            console.log(`[auth-google] Account linking: email ${payload.email} already exists as uid=${existingUid}, merging`);
+                            uid = existingUid;
+                        }
+                    }
+                }
+                catch (linkErr) {
+                    console.warn("[auth-google] Account linking check failed:", linkErr?.message);
+                }
+            }
             const userPayload = {
                 uid,
                 email: payload.email || null,

@@ -214,11 +214,12 @@ Extract and return the structured data now.`;
             }
             (0, groq_client_1.logUsage)("ai-extract-data", undefined, 4000);
             console.log(`[ai-extract-data] Success via provider: ${usedProvider}`);
-            // Wrap in { fields: {...} } envelope
+            // Wrap in response envelope — include both `data` (for frontend compat) and `fields`
             res.json({
                 success: true,
+                data: data,
+                extracted: data,
                 module: mod,
-                fields: data,
                 fieldsCount: Object.keys(data).length,
                 charCount: text.length,
             });

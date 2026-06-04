@@ -40,13 +40,13 @@ Document drafting rules:
 // ─── JSON Structure Definitions per Task ────────────────────────────────────────
 const PLAINT_JSON_STRUCTURE = `{
   "title": "Short title of the plaint (e.g., 'Plaint for Recovery of Money', 'Plaint for Specific Performance of Agreement to Sell')",
-  "content": "Full plaint text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title, jurisdiction, parties description, concise numbered paragraphs of facts, cause of action, valuation and court fee, reliefs sought clause (lettered a, b, c...), verification, and signature block. Make it court-ready.",
+  "content": "Full plaint text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., PLAINT, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title, jurisdiction, parties description, concise numbered paragraphs of facts, cause of action, valuation and court fee, reliefs sought clause (lettered a, b, c...), verification, and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning or disclaimer about the draft"]
 }`;
 const WS_JSON_STRUCTURE = `{
   "title": "Title of the Written Statement (e.g., 'Written Statement on behalf of Defendant')",
-  "content": "Complete written statement text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings including: cause title, preliminary objections, para-wise replies, additional pleas, set-off/counter-claim if applicable, verification, and signature block",
+  "content": "Complete written statement text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., WRITTEN STATEMENT, VERIFICATION. Section sub-headings use Title Case. Include: cause title, preliminary objections, para-wise replies, additional pleas, set-off/counter-claim if applicable, verification, and signature block",
   "paraReplies": [
     {
       "paraNumber": 1,
@@ -59,12 +59,12 @@ const WS_JSON_STRUCTURE = `{
 }`;
 const INJUNCTION_IA_JSON_STRUCTURE = `{
   "title": "Title of the Interlocutory Application (e.g., 'IA for Temporary Injunction under Order 39 Rules 1 & 2 CPC')",
-  "content": "Full IA text in PLAIN TEXT format (NO markdown, NO ** or ##): cause title, grounds (prima facie case, balance of convenience, irreparable loss), prayer clause, verification, and signature block",
+  "content": "Full IA text in PLAIN TEXT format (NO markdown, NO ** or ##). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings. Section sub-headings use Title Case. Include: cause title, grounds (prima facie case, balance of convenience, irreparable loss), prayer clause, verification, and signature block",
   "affidavitContent": "Supporting affidavit content in markdown: jurat, deponent details, paragraphs of facts supporting urgency and irreparable injury, verification"
 }`;
 const WRITTEN_ARGUMENTS_JSON_STRUCTURE = `{
   "title": "Title of Written Arguments (e.g., 'Written Arguments on behalf of Plaintiff')",
-  "content": "Complete written arguments text in PLAIN TEXT format (NO markdown, NO ** or ##): introduction, issue-wise arguments, conclusion, and prayer",
+  "content": "Complete written arguments text in PLAIN TEXT format (NO markdown, NO ** or ##). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Section headings use Title Case. Include: introduction, issue-wise arguments, conclusion, and prayer",
   "issueArguments": [
     {
       "issueNumber": 1,

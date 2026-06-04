@@ -47,50 +47,81 @@ function parseJsonFromText(text) {
  * Sarvam (primary, cheapest) → Groq (fallback, fast) → Gemini (final fallback, reliable)
  *
  * Returns structured JSON data parsed from the AI response.
+ * Includes retry with exponential backoff for rate limit / quota errors.
  */
 async function callAIWithFallback(systemPrompt, userPrompt, jsonStructureHint, options) {
     const temperature = options?.temperature ?? 0.3;
     const sarvamModel = options?.sarvamModel ?? "sarvam-30b";
     const maxTokens = options?.maxTokens ?? 4000;
     const functionName = options?.function_name ?? "unknown";
+    const maxRetries = 2;
+    function isRetryableError(errMsg) {
+        return errMsg.includes("403") || errMsg.includes("429") ||
+            errMsg.includes("rate_limit") || errMsg.includes("quota") ||
+            errMsg.includes("timeout") || errMsg.includes("ECONNRESET") ||
+            errMsg.includes("Lightning");
+    }
+    function sleep(ms) {
+        return new Promise(r => setTimeout(r, ms));
+    }
     let lastError = null;
     // Provider 1: Sarvam AI (cheapest for Indian languages)
-    try {
-        const data = await (0, sarvam_client_1.callSarvamStructured)(systemPrompt, userPrompt, jsonStructureHint, temperature, sarvamModel, maxTokens);
-        (0, groq_client_1.logUsage)(functionName, undefined, maxTokens);
-        console.log(`[${functionName}] Success via provider: sarvam`);
-        return { data, provider: "sarvam" };
-    }
-    catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        console.error(`[${functionName}] Sarvam failed: ${lastError.message}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const data = await (0, sarvam_client_1.callSarvamStructured)(systemPrompt, userPrompt, jsonStructureHint, temperature, sarvamModel, maxTokens);
+            (0, groq_client_1.logUsage)(functionName, undefined, maxTokens);
+            console.log(`[${functionName}] Success via provider: sarvam`);
+            return { data, provider: "sarvam" };
+        }
+        catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+            console.error(`[${functionName}] Sarvam failed (attempt ${attempt}/${maxRetries}): ${lastError.message}`);
+            if (isRetryableError(lastError.message) && attempt < maxRetries) {
+                await sleep(Math.pow(2, attempt) * 1000);
+                continue;
+            }
+            break;
+        }
     }
     // Provider 2: Groq (fast, cheap for English)
-    try {
-        const data = await (0, groq_client_1.callGroqStructured)(systemPrompt, userPrompt, jsonStructureHint, temperature);
-        (0, groq_client_1.logUsage)(functionName, undefined, maxTokens);
-        console.log(`[${functionName}] Success via provider: groq`);
-        return { data, provider: "groq" };
-    }
-    catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        console.error(`[${functionName}] Groq failed: ${lastError.message}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const data = await (0, groq_client_1.callGroqStructured)(systemPrompt, userPrompt, jsonStructureHint, temperature);
+            (0, groq_client_1.logUsage)(functionName, undefined, maxTokens);
+            console.log(`[${functionName}] Success via provider: groq`);
+            return { data, provider: "groq" };
+        }
+        catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+            console.error(`[${functionName}] Groq failed (attempt ${attempt}/${maxRetries}): ${lastError.message}`);
+            if (isRetryableError(lastError.message) && attempt < maxRetries) {
+                await sleep(Math.pow(2, attempt) * 1000);
+                continue;
+            }
+            break;
+        }
     }
     // Provider 3: Gemini (reliable fallback)
-    try {
-        const geminiPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON matching this structure:\n${jsonStructureHint}`;
-        const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, temperature);
-        const data = parseJsonFromText(geminiResponse);
-        (0, groq_client_1.logUsage)(functionName, undefined, maxTokens);
-        console.log(`[${functionName}] Success via provider: gemini`);
-        return { data, provider: "gemini" };
-    }
-    catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        console.error(`[${functionName}] Gemini failed: ${lastError.message}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const geminiPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON matching this structure:\n${jsonStructureHint}`;
+            const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, temperature);
+            const data = parseJsonFromText(geminiResponse);
+            (0, groq_client_1.logUsage)(functionName, undefined, maxTokens);
+            console.log(`[${functionName}] Success via provider: gemini`);
+            return { data, provider: "gemini" };
+        }
+        catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+            console.error(`[${functionName}] Gemini failed (attempt ${attempt}/${maxRetries}): ${lastError.message}`);
+            if (isRetryableError(lastError.message) && attempt < maxRetries) {
+                await sleep(Math.pow(2, attempt) * 1000);
+                continue;
+            }
+        }
     }
     // All providers failed
-    throw new Error(`All AI providers failed. Last error: ${lastError?.message || "Unknown error"}`);
+    throw new Error(`All AI providers failed. Last error: ${lastError?.message || "Unknown error"}. Please try again in a few minutes.`);
 }
 // ─── Free-Text Response (Sarvam → Groq → Gemini) ──────────────────
 /**

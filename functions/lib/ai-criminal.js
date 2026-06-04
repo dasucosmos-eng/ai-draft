@@ -35,6 +35,13 @@ Key section mappings:
 
 CRITICAL AI TRAP: BNSS Sec 438 = CrPC Sec 397 (revision), NOT CrPC Sec 438 (anticipatory bail). The numbers shifted!
 
+CRITICAL TEXT CASING RULES:
+- Body text MUST be in normal sentence case (NOT all caps, NOT all uppercase)
+- Only specific HEADING WORDS may be in ALL CAPS: IN THE HIGH COURT OF..., BAIL APPLICATION, CRIMINAL REVISION PETITION, WRIT PETITION, CRLMP, AFFIDAVIT, VERIFICATION, VAKALATNAMA, PRAYER, CAUSE TITLE
+- Section sub-headings (e.g., "Facts of the Case", "Grounds for Bail") should use Title Case, NOT ALL CAPS
+- Party names, court names, legal terms should use normal capitalization
+- DO NOT write the entire document or body paragraphs in uppercase/block letters
+
 DRAFTING RULES:
 - For bail: Apply triple test (flight risk, evidence tampering, investigation hampering)
 - For bail: Include Satender Kumar Antil v. K.B. Sanjay (2023) categorization for co-accused
@@ -49,19 +56,19 @@ DRAFTING RULES:
 // ─── JSON Structure Definitions per Task ────────────────────────────────────────
 const BAIL_JSON_STRUCTURE = `{
   "title": "Short title of the bail application (e.g., 'Application for Regular Bail under Section 439 CrPC / Section 483 BNSS')",
-  "content": "Full bail application text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and case number, applicant/accused details in numbered paragraphs, FIR details and sections charged, grounds for bail applying the triple test (flight risk, evidence tampering, investigation hampering), specific facts supporting each ground, Satender Kumar Antil categorization analysis if co-accused, surety details if provided, prayer clause requesting release on bail with conditions, verification and signature block. Make it court-ready.",
+  "content": "Full bail application text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., BAIL APPLICATION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and case number, applicant/accused details in numbered paragraphs, FIR details and sections charged, grounds for bail applying the triple test (flight risk, evidence tampering, investigation hampering), specific facts supporting each ground, Satender Kumar Antil categorization analysis if co-accused, surety details if provided, prayer clause requesting release on bail with conditions, verification and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning or disclaimer about the draft", "Any flag about old/new law section usage"]
 }`;
 const CRP_JSON_STRUCTURE = `{
   "title": "Title of the CRP (e.g., 'Criminal Revision Petition under Section 397/399 CrPC / Section 438 BNSS' or 'Criminal Miscellaneous Case for Quashing under Section 482 CrPC / Section 528 BNSS')",
-  "content": "Full CRP text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and CRP/Case number, petitioner and respondent details, impugned order date and details, case history in numbered paragraphs, jurisdiction and maintainability analysis, grounds in numbered paragraphs with legal reasoning, for revision: patent defects / manifest injustice / jurisdictional error; for quashing: Bhajan Lal 7-category grounds analysis, prayer clause, verification and signature block. Make it court-ready.",
+  "content": "Full CRP text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., CRIMINAL REVISION PETITION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and CRP/Case number, petitioner and respondent details, impugned order date and details, case history in numbered paragraphs, jurisdiction and maintainability analysis, grounds in numbered paragraphs with legal reasoning, for revision: patent defects / manifest injustice / jurisdictional error; for quashing: Bhajan Lal 7-category grounds analysis, prayer clause, verification and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning about maintainability or limitation", "Any flag about old/new law section usage"]
 }`;
 const WRIT_JSON_STRUCTURE = `{
   "title": "Title of the writ petition (e.g., 'Writ Petition under Article 226 of the Constitution of India')",
-  "content": "Full writ petition text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and WP number (if PIL, indicate PIL status), petitioner details, respondent details with designations and departments, facts in numbered paragraphs, locus standi analysis, alternative remedy check and why writ is maintainable, fundamental right violation analysis with specific constitutional articles, grounds in numbered paragraphs, interim relief sought if any, prayer clause specifying the exact writ (mandamus/certiorari/prohibition/habeas corpus/quo warranto), verification and signature block. Make it court-ready.",
+  "content": "Full writ petition text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., WRIT PETITION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and WP number (if PIL, indicate PIL status), petitioner details, respondent details with designations and departments, facts in numbered paragraphs, locus standi analysis, alternative remedy check and why writ is maintainable, fundamental right violation analysis with specific constitutional articles, grounds in numbered paragraphs, interim relief sought if any, prayer clause specifying the exact writ (mandamus/certiorari/prohibition/habeas corpus/quo warranto), verification and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Locus standi concern if applicable", "Alternative remedy availability warning", "Territorial jurisdiction note"]
 }`;
@@ -85,7 +92,7 @@ const SUGGEST_BAIL_GROUNDS_JSON_STRUCTURE = `{
 }`;
 const CRLMP_JSON_STRUCTURE = `{
   "title": "Title of the CRLMP (e.g., 'Criminal Miscellaneous Petition for Interim Relief' or 'CRLMP for Suspension of Sentence')",
-  "content": "Full CRLMP text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and CRLMP number, case details (case number, court, order date), petitioner and respondent details, factual background in numbered paragraphs, grounds for the relief sought in numbered paragraphs with legal provisions, prayer clause specifying the exact relief, verification and signature block. Make it court-ready.",
+  "content": "Full CRLMP text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., CRLMP, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and CRLMP number, case details (case number, court, order date), petitioner and respondent details, factual background in numbered paragraphs, grounds for the relief sought in numbered paragraphs with legal provisions, prayer clause specifying the exact relief, verification and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning about limitations or procedural requirements", "Any flag about old/new law section usage"]
 }`;

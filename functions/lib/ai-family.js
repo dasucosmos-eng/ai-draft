@@ -36,23 +36,30 @@ CRITICAL RULES:
 - For MVOP: Calculate compensation using income multiplier method (Selvi 2018)
 - For succession: Distinguish personal law (Hindu/Muslim/Christian)
 - For maintenance: Consider both CrPC 125 and HAMA provisions
-- Include verification and vakalatnama format`;
+- Include verification and vakalatnama format
+
+CRITICAL TEXT CASING RULES:
+- Body text MUST be in normal sentence case (NOT all caps, NOT all uppercase)
+- Only specific HEADING WORDS may be in ALL CAPS: IN THE HIGH COURT OF..., IN THE FAMILY COURT OF..., BEFORE THE JUDICIAL MAGISTRATE..., PETITION, APPLICATION, AFFIDAVIT, VERIFICATION, VAKALATNAMA, PRAYER, CAUSE TITLE
+- Section sub-headings (like "Facts of the Case", "Grounds for Relief") should use Title Case, NOT ALL CAPS
+- Party names, court names, and legal terms should use normal capitalization
+- DO NOT write the entire document or body paragraphs in uppercase/block letters`;
 // ─── JSON Structure Definitions per Task ────────────────────────────────────────
 const DIVORCE_JSON_STRUCTURE = `{
   "title": "Title of the petition (e.g., 'Petition for Divorce under Sec 13(1)(ia) HMA', 'Joint Petition for Mutual Consent Divorce under Sec 13-B HMA')",
-  "content": "Full petition text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and case number placeholder, jurisdiction clause, parties description, detailed factual narration in numbered paragraphs (marriage details, cohabitation, grounds/mutual consent, children if any, efforts at reconciliation, grounds under specific section), reliefs sought, verification, and signature block. Make it court-ready.",
+  "content": "Full petition text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE FAMILY COURT..., PETITION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and case number placeholder, jurisdiction clause, parties description, detailed factual narration in numbered paragraphs (marriage details, cohabitation, grounds/mutual consent, children if any, efforts at reconciliation, grounds under specific section), reliefs sought, verification, and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1 (e.g., 'Sec 14 bar: 1 year from marriage before filing')", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning or disclaimer about the draft"]
 }`;
 const DOP_JSON_STRUCTURE = `{
   "title": "Title of the DOP application (e.g., 'Application under Sec 12 PWDVA 2005 for Protection Order', 'Application under Sec 12 PWDVA 2005 for Monetary Relief')",
-  "content": "Full application text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title (before JMFC), application under Sec 12 PWDVA 2005, applicant and respondent details, detailed factual narration of domestic violence incidents in numbered paragraphs, impact on applicant and children, specific reliefs sought under relevant sections (18-23), affidavit of facts, verification, and signature block. Make it court-ready.",
+  "content": "Full application text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like BEFORE THE JUDICIAL MAGISTRATE..., APPLICATION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title (before JMFC), application under Sec 12 PWDVA 2005, applicant and respondent details, detailed factual narration of domestic violence incidents in numbered paragraphs, impact on applicant and children, specific reliefs sought under relevant sections (18-23), affidavit of facts, verification, and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1 (e.g., '60-day disposal mandate under Sec 12(5)')", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning or disclaimer about the draft"]
 }`;
 const MVOP_JSON_STRUCTURE = `{
   "title": "Title of the claim petition (e.g., 'Claim Petition under Sec 166 Motor Vehicles Act', 'Application for Interim Compensation under Sec 140 MVA')",
-  "content": "Full petition text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title before MACT, petition under Sec 166 MVA (or Sec 140 for interim), claimant details, vehicle and insurance details, detailed factual narration of accident in numbered paragraphs, injury/death details, FIR details, grounds for compensation, prayer for compensation with breakdown, list of documents to be annexed, verification, and signature block. Make it court-ready.",
+  "content": "Full petition text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like BEFORE THE MOTOR ACCIDENT CLAIMS TRIBUNAL..., CLAIM PETITION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title before MACT, petition under Sec 166 MVA (or Sec 140 for interim), claimant details, vehicle and insurance details, detailed factual narration of accident in numbered paragraphs, injury/death details, FIR details, grounds for compensation, prayer for compensation with breakdown, list of documents to be annexed, verification, and signature block. Make it court-ready.",
   "compensationBreakdown": {
     "annualIncome": "Claimant's annual income",
     "multiplier": "Multiplier applicable based on Selvi v. Tamil Nadu (2018) age-based table",
@@ -69,19 +76,19 @@ const MVOP_JSON_STRUCTURE = `{
 }`;
 const SUCCESSION_JSON_STRUCTURE = `{
   "title": "Title of the petition (e.g., 'Petition for Succession Certificate under Sec 372 ISA', 'Petition for Probate under Sec 254 ISA', 'Petition for Declaration of Legal Heirs')",
-  "content": "Full petition text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and case number placeholder, petition under relevant section of Indian Succession Act, deceased person details (name, age, date/place of death, religion, last address), property details (movable/immovable, description, estimated value, debts), list of legal heirs with shares under applicable personal law, ground for petition, prayer for certificate/probate, list of documents to be annexed, verification, and signature block. Make it court-ready.",
+  "content": "Full petition text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE DISTRICT COURT..., PETITION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and case number placeholder, petition under relevant section of Indian Succession Act, deceased person details (name, age, date/place of death, religion, last address), property details (movable/immovable, description, estimated value, debts), list of legal heirs with shares under applicable personal law, ground for petition, prayer for certificate/probate, list of documents to be annexed, verification, and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1 (e.g., 'Section 213 deleted by Repealing Act 2025 — probate now voluntary')", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning or disclaimer about the draft"]
 }`;
 const GUARDIAN_JSON_STRUCTURE = `{
   "title": "Title of the petition (e.g., 'Petition for Appointment of Guardian under Sec 7 GW Act', 'Application for Variation of Guardianship under Sec 25 GW Act', 'Application for Removal of Guardian')",
-  "content": "Full petition text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and case number placeholder, petition under Guardian and Wards Act 1890, minor details (name, age, gender, address), parent status (alive/deceased/absent with details), applicant details (name, address, relation, income), grounds for guardianship/variation/removal with detailed factual narration in numbered paragraphs, child welfare considerations, prayer clause, list of documents to be annexed, verification, and signature block. Make it court-ready.",
+  "content": "Full petition text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE DISTRICT COURT..., PETITION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and case number placeholder, petition under Guardian and Wards Act 1890, minor details (name, age, gender, address), parent status (alive/deceased/absent with details), applicant details (name, address, relation, income), grounds for guardianship/variation/removal with detailed factual narration in numbered paragraphs, child welfare considerations, prayer clause, list of documents to be annexed, verification, and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1 (e.g., 'Child welfare is the paramount consideration under Sec 17 GW Act')", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning or disclaimer about the draft"]
 }`;
 const MAINTENANCE_JSON_STRUCTURE = `{
   "title": "Title of the application (e.g., 'Application for Maintenance under Sec 125 CrPC', 'Application for Maintenance under Sec 18 HAMA')",
-  "content": "Full application text in PLAIN TEXT format (NO markdown). Use ALL CAPS for headings. Include: cause title with court name and case number placeholder, application under the relevant section (CrPC 125 or HAMA Sec 18-22), applicant and respondent details, marriage details, children details, factual narration of neglect/refusal to maintain in numbered paragraphs, income and means of both parties, amount claimed with justification, grounds for entitlement, reliefs sought, verification, and signature block. Make it court-ready.",
+  "content": "Full application text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like BEFORE THE..., APPLICATION, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and case number placeholder, application under the relevant section (CrPC 125 or HAMA Sec 18-22), applicant and respondent details, marriage details, children details, factual narration of neglect/refusal to maintain in numbered paragraphs, income and means of both parties, amount claimed with justification, grounds for entitlement, reliefs sought, verification, and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1 (e.g., 'CrPC 125 is a summary proceeding — standard of proof is preponderance of probabilities')", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning or disclaimer about the draft"]
 }`;
