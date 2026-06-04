@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   output: "export",
   trailingSlash: true,
   turbopack: {
-    root: '/home/z/ai-draft-bond',
+    root: undefined,
   },
   images: {
     unoptimized: true,
