@@ -11,10 +11,10 @@ const config = {
   apiTask: 'parseIssues',
   module: 'civil' as const,
   formFields: [
-    { key: 'orderText', label: 'Order Text', placeholder: 'Paste the full text of the court order here...', type: 'textarea' },
+    { key: 'orderText', label: 'Order Text', placeholder: 'Paste the full text of the court order here...', type: 'textarea' as const },
     { key: 'courtName', label: 'Court Name', placeholder: 'Name of the court', half: true },
     { key: 'caseNumber', label: 'Case Number', placeholder: 'e.g., CS No. 123/2024', half: true },
-    { key: 'additionalNotes', label: 'Additional Notes', placeholder: 'Specific aspects to focus on', type: 'textarea' },
+    { key: 'additionalNotes', label: 'Additional Notes', placeholder: 'Specific aspects to focus on', type: 'textarea' as const },
   ],
   getResultContent: (res: any) => res.content || res.responseText || res.analysis || res.draft || JSON.stringify(res, null, 2),
 };

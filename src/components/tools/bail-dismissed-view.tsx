@@ -17,8 +17,8 @@ const config = {
     { key: 'caseNumber', label: 'Case Number', placeholder: 'CC/SC No.', half: true },
     { key: 'firNumber', label: 'FIR Number', placeholder: 'FIR number', half: true },
     { key: 'sectionsCharged', label: 'Sections Charged', placeholder: 'Sections', half: true },
-    { key: 'oppositionGrounds', label: 'Grounds for Opposition', placeholder: 'Why bail should not be granted - flight risk, tampering, serious offence...', type: 'textarea' },
-    { key: 'facts', label: 'Relevant Facts', placeholder: 'Facts supporting opposition', type: 'textarea' },
+    { key: 'oppositionGrounds', label: 'Grounds for Opposition', placeholder: 'Why bail should not be granted - flight risk, tampering, serious offence...', type: 'textarea' as const },
+    { key: 'facts', label: 'Relevant Facts', placeholder: 'Facts supporting opposition', type: 'textarea' as const },
   ],
   getResultContent: (res: any) => res.content || res.responseText || res.draft || JSON.stringify(res, null, 2),
 };

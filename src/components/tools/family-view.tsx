@@ -14,10 +14,10 @@ const config = {
     { key: 'documentType', label: 'Document Type', placeholder: 'e.g., Divorce Petition, Maintenance Application, Custody Application' },
     { key: 'petitionerName', label: 'Petitioner Name', placeholder: 'Name of petitioner', half: true },
     { key: 'respondentName', label: 'Respondent Name', placeholder: 'Name of respondent', half: true },
-    { key: 'marriageDate', label: 'Marriage Date', placeholder: 'Date of marriage', type: 'date', half: true },
+    { key: 'marriageDate', label: 'Marriage Date', placeholder: 'Date of marriage', type: 'date' as const, half: true },
     { key: 'children', label: 'Children', placeholder: 'Names and ages of children', half: true },
-    { key: 'facts', label: 'Case Facts', placeholder: 'Describe the situation, background, and grounds...', type: 'textarea' },
-    { key: 'reliefSought', label: 'Relief Sought', placeholder: 'What relief do you seek?', type: 'textarea' },
+    { key: 'facts', label: 'Case Facts', placeholder: 'Describe the situation, background, and grounds...', type: 'textarea' as const },
+    { key: 'reliefSought', label: 'Relief Sought', placeholder: 'What relief do you seek?', type: 'textarea' as const },
   ],
   getResultContent: (res: any) => res.content || res.responseText || res.draft || JSON.stringify(res, null, 2),
 };

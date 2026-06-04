@@ -2,14 +2,29 @@ import { create } from 'zustand';
 import type { CaseItem, DocumentItem, TaskItem, TimelineEvent, InvoiceItem, ChatMessage, UserDataPayload } from '@/lib/types';
 import { apiCall, getAuthToken, getCurrentUid } from '@/lib/api-client';
 
-/* ─── Debounced save: batches all mutations into one Firestore write ─── */
+/* ─── Save infrastructure: like social media's write-through cache ─── */
 let _saveTimer: ReturnType<typeof setTimeout> | null = null;
 let _saveInProgress = false;
+let _isLoading = false; // Prevents saves during initial data load
+let _retryCount = 0;
+const MAX_RETRIES = 3;
+
+// Lock saves during data load — prevents writing empty data to Firestore
+export function setSaveLock(locked: boolean) {
+  _isLoading = locked;
+}
 
 async function flushSaveToFirestore() {
   if (_saveInProgress) {
     // If a save is already running, re-schedule after it completes
     _saveTimer = setTimeout(flushSaveToFirestore, 500);
+    return;
+  }
+
+  // BLOCK saves during initial data load (prevents empty overwrite)
+  if (_isLoading) {
+    console.log('[save] Blocked during data load — will retry after load');
+    _saveTimer = setTimeout(flushSaveToFirestore, 2000);
     return;
   }
 
@@ -19,45 +34,57 @@ async function flushSaveToFirestore() {
     _saveTimer = null;
   }
 
-  const { useAppStore } = await import('./app-store');
   const state = useAppStore.getState();
   const token = getAuthToken();
   const uid = getCurrentUid();
   if (!token || !uid) return;
+  // Don't save if data hasn't been loaded yet
+  if (!state.dataLoaded) {
+    console.log('[save] Blocked — data not loaded yet');
+    return;
+  }
 
   _saveInProgress = true;
   try {
-    const { useProfileStore } = await import('@/store/profile-store');
-    const { useClientsStore } = await import('@/store/clients-store');
-    const { useSubscriptionStore } = await import('@/store/subscription-store');
-
     const profile = useProfileStore.getState().profile;
     const clients = useClientsStore.getState().clients;
     const subscription = useSubscriptionStore.getState().subscription;
 
-    const res = await apiCall('/user-data', {
-      action: 'save',
+    const payload = {
+      action: 'save' as const,
       uid,
-      data: {
-        cases: state.cases,
-        documents: state.documents,
-        tasks: state.tasks,
-        timelineEvents: state.timelineEvents,
-        invoices: state.invoices,
-        clients,
-        profile,
-        chatMessages: state.chatMessages,
-        subscription,
-      },
-    }, token);
+      cases: state.cases,
+      documents: state.documents,
+      tasks: state.tasks,
+      timelineEvents: state.timelineEvents,
+      invoices: state.invoices,
+      clients,
+      profile,
+      chatMessages: state.chatMessages,
+      subscription,
+    };
 
+    console.log(`[save] Saving ${state.cases.length} cases, ${clients.length} clients, ${state.documents.length} docs...`);
+
+    const res = await apiCall('/user-data', payload, token);
+
+    if (res.success && !res.warning) {
+      _retryCount = 0; // Reset retry count on success
+      console.log('[save] ✓ Saved successfully');
+    }
     if (res.warning) {
-      console.warn('Firestore save warning:', res.warning);
+      console.warn('[save] ⚠ Firestore save warning:', res.warning);
     }
   } catch (err) {
-    console.error('Failed to save to Firestore:', err);
-    // Retry once after 3 seconds
-    _saveTimer = setTimeout(flushSaveToFirestore, 3000);
+    console.error('[save] ✗ Failed to save to Firestore:', err);
+    _retryCount++;
+    if (_retryCount <= MAX_RETRIES) {
+      const delay = Math.min(3000 * _retryCount, 15000);
+      console.log(`[save] Retrying (${_retryCount}/${MAX_RETRIES}) in ${delay}ms...`);
+      _saveTimer = setTimeout(flushSaveToFirestore, delay);
+    } else {
+      console.error('[save] Max retries reached — data may be lost if page is closed');
+    }
   } finally {
     _saveInProgress = false;
   }
@@ -68,8 +95,22 @@ function debouncedSave(delay = 1000) {
   _saveTimer = setTimeout(flushSaveToFirestore, delay);
 }
 
-// Also expose for clients-store to use
-export { debouncedSave, flushSaveToFirestore };
+// Force immediate save (used by logout, page unload)
+function immediateSave() {
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
+  flushSaveToFirestore();
+}
+
+// Also expose for other stores
+export { debouncedSave, flushSaveToFirestore, immediateSave };
+
+// Forward declarations for circular deps
+import { useProfileStore } from '@/store/profile-store';
+import { useClientsStore } from '@/store/clients-store';
+import { useSubscriptionStore } from '@/store/subscription-store';
 
 interface AppState {
   currentView: string;
@@ -136,6 +177,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedCaseId: (id) => set({ selectedCaseId: id }),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
 
+  // Set* methods are used during data load — they do NOT trigger saves
   setCases: (cases) => set({ cases }),
   addCase: (c) => {
     set((s) => ({ cases: [c, ...s.cases] }));
@@ -251,7 +293,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  // Immediate save (used by logout, etc.)
+  // Immediate save (used by logout, beforeunload)
   saveToFirestore: async () => {
     await flushSaveToFirestore();
   },

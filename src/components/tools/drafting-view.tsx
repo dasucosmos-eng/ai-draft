@@ -600,7 +600,7 @@ export function DraftingView({ config }: DraftingViewProps) {
               })}
 
               {/* Manual Generate Button */}
-              {(hasAnyField && !result && !loading && stage !== 'generating') && (
+              {(hasAnyField && !result && !loading) && (
                 <>
                   <Separator className="my-2" />
                   <div className="flex items-center gap-3">

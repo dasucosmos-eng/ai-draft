@@ -18,9 +18,9 @@ const config = {
     { key: 'courtName', label: 'Court Name', placeholder: 'Magistrate court / Family court' },
     { key: 'residenceAddress', label: 'Shared Household Address', placeholder: 'Address of shared household' },
     { key: 'children', label: 'Children Details', placeholder: 'Minor children details' },
-    { key: 'natureOfViolence', label: 'Nature of Violence', placeholder: 'Physical, emotional, economic, sexual...', type: 'textarea' },
-    { key: 'incidents', label: 'Specific Incidents', placeholder: 'Describe incidents of domestic violence...', type: 'textarea' },
-    { key: 'reliefSought', label: 'Relief Sought', placeholder: 'Protection order, residence order, maintenance, custody...', type: 'textarea' },
+    { key: 'natureOfViolence', label: 'Nature of Violence', placeholder: 'Physical, emotional, economic, sexual...', type: 'textarea' as const },
+    { key: 'incidents', label: 'Specific Incidents', placeholder: 'Describe incidents of domestic violence...', type: 'textarea' as const },
+    { key: 'reliefSought', label: 'Relief Sought', placeholder: 'Protection order, residence order, maintenance, custody...', type: 'textarea' as const },
   ],
   getResultContent: (res: any) => res.content || res.responseText || res.draft || JSON.stringify(res, null, 2),
 };

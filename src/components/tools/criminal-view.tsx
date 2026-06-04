@@ -18,8 +18,8 @@ const config = {
     { key: 'policeStation', label: 'Police Station', placeholder: 'Name of PS', half: true },
     { key: 'sectionsCharged', label: 'Sections Charged', placeholder: 'e.g., 302, 201, 34 IPC', half: true },
     { key: 'offense', label: 'Offense Type', placeholder: 'Type of offense', half: true },
-    { key: 'facts', label: 'Case Facts', placeholder: 'Describe the facts of the case...', type: 'textarea' },
-    { key: 'grounds', label: 'Grounds / Defense', placeholder: 'Grounds for bail or defense strategy...', type: 'textarea' },
+    { key: 'facts', label: 'Case Facts', placeholder: 'Describe the facts of the case...', type: 'textarea' as const },
+    { key: 'grounds', label: 'Grounds / Defense', placeholder: 'Grounds for bail or defense strategy...', type: 'textarea' as const },
   ],
   getResultContent: (res: any) => res.content || res.responseText || res.draft || JSON.stringify(res, null, 2),
 };

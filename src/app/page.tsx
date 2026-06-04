@@ -46,5 +46,18 @@ export default function HomePage() {
     return <LoginView />;
   }
 
+  // BUG #2 FIX: Wait for data to be fully loaded from Firestore before rendering UI
+  // This prevents showing empty dashboard (perceived data loss) while data is still loading
+  if (!dataLoaded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Syncing your data...</p>
+        </div>
+      </div>
+    );
+  }
+
   return <AppLayout />;
 }

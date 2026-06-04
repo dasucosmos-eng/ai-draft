@@ -15,9 +15,9 @@ const config = {
     { key: 'defendantName', label: 'Defendant Name', placeholder: 'Your client name', half: true },
     { key: 'caseNumber', label: 'Suit Number', placeholder: 'e.g., CS No. 123/2024', half: true },
     { key: 'courtName', label: 'Court Name', placeholder: 'Court name', half: true },
-    { key: 'plaintText', label: 'Plaint Text / Allegations', placeholder: 'Copy/paste the plaint allegations here...', type: 'textarea' },
-    { key: 'defense', label: 'Defense / Counter Arguments', placeholder: 'Describe the defense strategy and counter arguments...', type: 'textarea' },
-    { key: 'additionalFacts', label: 'Additional Facts', placeholder: 'Any additional facts supporting defense', type: 'textarea' },
+    { key: 'plaintText', label: 'Plaint Text / Allegations', placeholder: 'Copy/paste the plaint allegations here...', type: 'textarea' as const },
+    { key: 'defense', label: 'Defense / Counter Arguments', placeholder: 'Describe the defense strategy and counter arguments...', type: 'textarea' as const },
+    { key: 'additionalFacts', label: 'Additional Facts', placeholder: 'Any additional facts supporting defense', type: 'textarea' as const },
   ],
   getResultContent: (res: any) => res.content || res.responseText || res.draft || JSON.stringify(res, null, 2),
 };
