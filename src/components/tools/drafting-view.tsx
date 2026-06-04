@@ -18,7 +18,7 @@ import { apiCall, getAuthToken } from '@/lib/api-client';
 import { DocumentUpload } from '@/components/shared/document-upload';
 import { DocumentViewer } from '@/components/shared/document-viewer';
 import { MarkdownContent } from '@/components/shared/markdown-content';
-import { useAppStore } from '@/store/app-store';
+import { useDataStore } from '@/store/data-store';
 import { useClientsStore } from '@/store/clients-store';
 import { generatePDF, downloadPDF } from '@/lib/pdf-generator';
 import { v4 as uuidv4 } from 'uuid';
@@ -70,9 +70,9 @@ function useAutonomousDrafting(config: ViewConfig) {
   const formDataRef = useRef<Record<string, string>>({});
   formDataRef.current = formData;
 
-  const cases = useAppStore((s) => s.cases);
+  const cases = useDataStore((s) => s.cases);
   const clients = useClientsStore((s) => s.clients);
-  const addDocument = useAppStore((s) => s.addDocument);
+  const addDocument = useDataStore((s) => s.addDocument);
 
   const updateField = (key: string, value: string) => {
     setFormData((prev) => ({ ...prev, [key]: value }));

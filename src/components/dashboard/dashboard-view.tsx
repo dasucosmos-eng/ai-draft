@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useDataStore } from '@/store/data-store';
 import { useAppStore } from '@/store/app-store';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,9 +16,9 @@ import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 export function DashboardView() {
-  const cases = useAppStore((s) => s.cases);
-  const tasks = useAppStore((s) => s.tasks);
-  const timelineEvents = useAppStore((s) => s.timelineEvents);
+  const cases = useDataStore((s) => s.cases);
+  const tasks = useDataStore((s) => s.tasks);
+  const timelineEvents = useDataStore((s) => s.timelineEvents);
   const setCurrentView = useAppStore((s) => s.setCurrentView);
   const setSelectedCaseId = useAppStore((s) => s.setSelectedCaseId);
 

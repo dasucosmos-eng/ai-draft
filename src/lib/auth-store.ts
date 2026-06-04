@@ -1,120 +1,70 @@
-import { apiCall, apiGet, getApiBaseUrl, setAuthToken, setCurrentUid, clearAuth } from '@/lib/api-client';
-import { useAppStore, setSaveLock } from '@/store/app-store';
-import { useProfileStore } from '@/store/profile-store';
-import { useClientsStore } from '@/store/clients-store';
-import { useSubscriptionStore } from '@/store/subscription-store';
+/**
+ * Auth Store — handles authentication and data initialization.
+ *
+ * After auth succeeds:
+ * 1. Initializes the sync layer (IndexedDB + server sync)
+ * 2. Loads data from IndexedDB (instant) and triggers background server pull
+ * 3. Installs connectivity listeners (online/offline, visibility change, beforeunload)
+ */
 
-// Track whether data persistence handlers are installed
-let _persistenceInstalled = false;
+import { apiCall, setAuthToken, setCurrentUid, clearAuth } from '@/lib/api-client';
+import { initializeSync, flushAndClear } from '@/lib/sync-layer';
+import { loadAllCachedData } from '@/lib/db';
+import { initDataStoreBridge } from '@/store/data-store';
 
-function installPersistenceHandlers() {
-  if (_persistenceInstalled || typeof window === 'undefined') return;
-  _persistenceInstalled = true;
+/* ─── Cache uid to detect account switches ─── */
 
-  // BUG #3 FIX: Save on page close/navigate away
-  window.addEventListener('beforeunload', () => {
-    // Use sendBeacon approach: fire-and-forget, like social media apps
-    const token = localStorage.getItem('aidraft_auth_token');
-    const uid = localStorage.getItem('aidraft_current_uid');
-    if (!token || !uid || !useAppStore.getState().dataLoaded) return;
-
-    // Synchronous save attempt via sendBeacon (fire-and-forget, like social media)
-    const state = useAppStore.getState();
-    const profile = useProfileStore.getState().profile;
-    const clients = useClientsStore.getState().clients;
-    const subscription = useSubscriptionStore.getState().subscription;
-
-    const payload = JSON.stringify({
-      action: 'save',
-      _token: token, // sendBeacon can't set headers, so pass token in body
-      uid,
-      cases: state.cases,
-      documents: state.documents,
-      tasks: state.tasks,
-      timelineEvents: state.timelineEvents,
-      invoices: state.invoices,
-      clients,
-      profile,
-      chatMessages: state.chatMessages,
-      subscription,
-    });
-
-    // Use fetch keepalive instead of sendBeacon — reliable Content-Type headers
-    // sendBeacon's Content-Type is unreliable across browsers, causing silent parse failures
-    try {
-      fetch(`${getApiBaseUrl()}/user-data`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        keepalive: true, // survives page unload, like sendBeacon
-        credentials: 'include',
-      });
-    } catch {
-      // best effort — browser is unloading
-    }
-  });
-
-  // BUG #5 FIX: Reload data when tab becomes visible again (multi-tab sync)
-  // BUG #7 FIX: Flush pending saves BEFORE reloading to prevent overwriting unsaved changes
-  let _lastReload = 0;
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState !== 'visible') return;
-    // Throttle: don't reload more than once every 30 seconds
-    const now = Date.now();
-    if (now - _lastReload < 30000) return;
-    _lastReload = now;
-
-    const token = localStorage.getItem('aidraft_auth_token');
-    const uid = localStorage.getItem('aidraft_current_uid');
-    if (!token || !uid) return;
-
-    try {
-      // BUG #7: Flush any pending local changes to Firestore FIRST
-      const { flushSaveToFirestore } = await import('@/store/app-store');
-      if (useAppStore.getState().dataLoaded) {
-        await flushSaveToFirestore();
-      }
-    } catch (err) {
-      console.warn('[persistence] Flush before reload failed:', err);
-    }
-
-    setSaveLock(true);
-    loadAllUserData(uid, token).finally(() => {
-      setSaveLock(false);
-    });
-  });
+function getCachedUid(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('aidraft_cached_uid');
 }
+
+function setCachedUid(uid: string): void {
+  localStorage.setItem('aidraft_cached_uid', uid);
+}
+
+function clearCachedUid(): void {
+  localStorage.removeItem('aidraft_cached_uid');
+}
+
+/* ─── Load all user data via sync layer ─── */
 
 export async function loadAllUserData(uid: string, token: string): Promise<void> {
-  // Lock saves during data load to prevent empty overwrite
-  setSaveLock(true);
-
   try {
-    const result = await apiCall('/user-data', { action: 'load', uid }, token);
-    if (result.success && result.data) {
-      useAppStore.getState().loadFromFirestoreData(result.data);
-      useProfileStore.getState().loadProfile(result.data.profile);
-      useClientsStore.getState().setClients(result.data.clients || []);
-      useSubscriptionStore.getState().setSubscription(result.data.subscription);
-    } else {
-      // New user — no data yet, just mark as loaded
-      useAppStore.getState().loadFromFirestoreData({});
-      useProfileStore.getState().loadProfile(undefined);
-      useClientsStore.getState().setClients([]);
-      useSubscriptionStore.getState().clearSubscription();
-    }
+    await initializeSync(uid, token);
   } catch (err) {
-    // If load fails (e.g., new user, no Firestore doc yet), start fresh
-    console.warn('[load] Failed to load user data (may be new user):', err);
-    useAppStore.getState().loadFromFirestoreData({});
-    useProfileStore.getState().loadProfile(undefined);
-    useClientsStore.getState().setClients([]);
-    useSubscriptionStore.getState().clearSubscription();
-  } finally {
-    // Unlock saves after data is loaded
-    setSaveLock(false);
+    console.warn('[auth] Failed to initialize sync:', err);
   }
 }
+
+/* ─── Ensure profile store gets populated from IndexedDB ─── */
+
+async function populateStores() {
+  try {
+    const data = await loadAllCachedData();
+
+    // Initialize the data store bridge (keeps Zustand in sync with IndexedDB)
+    await initDataStoreBridge();
+
+    // Populate compatibility stores
+    if (data.profile) {
+      const { useProfileStore } = await import('@/store/profile-store');
+      useProfileStore.getState().loadProfile(data.profile);
+    }
+    if (data.clients?.length) {
+      const { useClientsStore } = await import('@/store/clients-store');
+      useClientsStore.getState().setClients(data.clients);
+    }
+    if (data.subscription) {
+      const { useSubscriptionStore } = await import('@/store/subscription-store');
+      useSubscriptionStore.getState().setSubscription(data.subscription);
+    }
+  } catch (err) {
+    console.warn('[auth] Failed to populate stores:', err);
+  }
+}
+
+/* ─── Auth functions ─── */
 
 export async function verifyAndRestore(): Promise<boolean> {
   const token = localStorage.getItem('aidraft_auth_token');
@@ -124,29 +74,36 @@ export async function verifyAndRestore(): Promise<boolean> {
   try {
     const result = await apiCall('/auth-verify', { token }, token);
     if (result.success) {
-      installPersistenceHandlers(); // Install save/visibility handlers once
+      setCachedUid(uid);
       await loadAllUserData(uid, token);
+      await populateStores();
       return true;
     }
     clearAuth();
+    clearCachedUid();
     return false;
   } catch {
     clearAuth();
+    clearCachedUid();
     return false;
   }
 }
 
 export async function googleAuth(): Promise<void> {
-  // The Cloud Function returns a 302 redirect directly — just navigate to it
   window.location.href = `${getApiBaseUrl()}/auth-google-url`;
+}
+
+async function onAuthSuccess(uid: string, token: string) {
+  setCachedUid(uid);
+  await loadAllUserData(uid, token);
+  await populateStores();
 }
 
 export async function emailSignup(email: string, password: string, displayName: string): Promise<{ token: string; uid: string }> {
   const result = await apiCall('/auth-email-signup', { email, password, displayName });
   setAuthToken(result.token);
   setCurrentUid(result.user.uid);
-  installPersistenceHandlers();
-  await loadAllUserData(result.user.uid, result.token);
+  await onAuthSuccess(result.user.uid, result.token);
   return { token: result.token, uid: result.user.uid };
 }
 
@@ -154,8 +111,7 @@ export async function emailSignin(email: string, password: string): Promise<{ to
   const result = await apiCall('/auth-email-signin', { email, password });
   setAuthToken(result.token);
   setCurrentUid(result.user.uid);
-  installPersistenceHandlers();
-  await loadAllUserData(result.user.uid, result.token);
+  await onAuthSuccess(result.user.uid, result.token);
   return { token: result.token, uid: result.user.uid };
 }
 
@@ -168,8 +124,7 @@ export async function phoneVerifyOtp(phoneNumber: string, otp: string, sessionId
   const result = await apiCall('/auth-phone-verify', { phoneNumber, otp, sessionId });
   setAuthToken(result.token);
   setCurrentUid(result.user.uid);
-  installPersistenceHandlers();
-  await loadAllUserData(result.user.uid, result.token);
+  await onAuthSuccess(result.user.uid, result.token);
   return { token: result.token, uid: result.user.uid };
 }
 
@@ -184,8 +139,9 @@ export async function handleTokenFromUrl(): Promise<boolean> {
     if (result.success) {
       setAuthToken(token);
       setCurrentUid(result.user.uid);
-      installPersistenceHandlers();
+      setCachedUid(result.user.uid);
       await loadAllUserData(result.user.uid, token);
+      await populateStores();
       // Clean URL
       window.history.replaceState({}, '', window.location.pathname);
       return true;
@@ -196,55 +152,34 @@ export async function handleTokenFromUrl(): Promise<boolean> {
   }
 }
 
+function getApiBaseUrl(): string {
+  return 'https://aidraft.bond/api';
+}
+
 export async function logout(): Promise<void> {
-  // BUG #4 FIX: Flush pending saves BEFORE clearing data
-  // BUG #8 FIX: Also cancel pending debounce timer to prevent re-scheduling
   try {
-    const { flushSaveToFirestore, immediateSave } = await import('@/store/app-store');
-    await immediateSave(); // Use immediateSave which clears timer + flushes
+    await flushAndClear();
   } catch (err) {
-    console.warn('[logout] Failed to flush before logout:', err);
+    console.warn('[logout] Failed to flush:', err);
   }
 
-  // Also fire a sendBeacon as backup
-  const token = localStorage.getItem('aidraft_auth_token');
-  const uid = localStorage.getItem('aidraft_current_uid');
-  if (token && uid && useAppStore.getState().dataLoaded) {
-    const state = useAppStore.getState();
-    const profile = useProfileStore.getState().profile;
-    const clients = useClientsStore.getState().clients;
-    const subscription = useSubscriptionStore.getState().subscription;
-
-    const payload = JSON.stringify({
-      action: 'save',
-      _token: token, // sendBeacon can't set headers, so pass token in body
-      uid,
-      cases: state.cases,
-      documents: state.documents,
-      tasks: state.tasks,
-      timelineEvents: state.timelineEvents,
-      invoices: state.invoices,
-      clients,
-      profile,
-      chatMessages: state.chatMessages,
-      subscription,
-    });
-
-    try {
-      fetch(`${getApiBaseUrl()}/user-data`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        keepalive: true,
-        credentials: 'include',
-      });
-    } catch { /* best effort */ }
-  }
-
-  // NOW clear everything
+  // Clear everything
   clearAuth();
-  useAppStore.getState().clearAllData();
-  useProfileStore.getState().clearProfile();
-  useClientsStore.getState().clearClients();
-  useSubscriptionStore.getState().clearSubscription();
+  clearCachedUid();
+
+  // Clear compatibility stores
+  try {
+    const { useAppStore } = await import('@/store/app-store');
+    useAppStore.getState().setCurrentView('dashboard');
+    useAppStore.getState().setSelectedCaseId(null);
+
+    const { useProfileStore } = await import('@/store/profile-store');
+    useProfileStore.getState().clearProfile();
+
+    const { useClientsStore } = await import('@/store/clients-store');
+    useClientsStore.getState().clearClients();
+
+    const { useSubscriptionStore } = await import('@/store/subscription-store');
+    useSubscriptionStore.getState().clearSubscription();
+  } catch { /* best effort */ }
 }

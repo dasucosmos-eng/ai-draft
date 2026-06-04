@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useDataStore } from '@/store/data-store';
 import { useAppStore } from '@/store/app-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,20 +28,20 @@ import {
 import type { TaskItem, TimelineEvent, DocumentItem } from '@/lib/types';
 
 export function CaseDetailView() {
-  const cases = useAppStore((s) => s.cases);
-  const selectedCaseId = useAppStore((s) => s.selectedCaseId);
-  const tasks = useAppStore((s) => s.tasks);
-  const timelineEvents = useAppStore((s) => s.timelineEvents);
-  const documents = useAppStore((s) => s.documents);
-  const updateCase = useAppStore((s) => s.updateCase);
-  const addTask = useAppStore((s) => s.addTask);
-  const updateTask = useAppStore((s) => s.updateTask);
-  const deleteTask = useAppStore((s) => s.deleteTask);
-  const addTimelineEvent = useAppStore((s) => s.addTimelineEvent);
-  const updateTimelineEvent = useAppStore((s) => s.updateTimelineEvent);
-  const deleteTimelineEvent = useAppStore((s) => s.deleteTimelineEvent);
-  const addDocument = useAppStore((s) => s.addDocument);
+  const cases = useDataStore((s) => s.cases);
+  const tasks = useDataStore((s) => s.tasks);
+  const timelineEvents = useDataStore((s) => s.timelineEvents);
+  const documents = useDataStore((s) => s.documents);
+  const updateCase = useDataStore((s) => s.updateCase);
+  const addTask = useDataStore((s) => s.addTask);
+  const updateTask = useDataStore((s) => s.updateTask);
+  const deleteTask = useDataStore((s) => s.deleteTask);
+  const addTimelineEvent = useDataStore((s) => s.addTimelineEvent);
+  const updateTimelineEvent = useDataStore((s) => s.updateTimelineEvent);
+  const deleteTimelineEvent = useDataStore((s) => s.deleteTimelineEvent);
+  const addDocument = useDataStore((s) => s.addDocument);
   const setCurrentView = useAppStore((s) => s.setCurrentView);
+  const selectedCaseId = useAppStore((s) => s.selectedCaseId);
 
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState<Record<string, any>>({});

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useAppStore } from '@/store/app-store';
+import { useDataStore } from '@/store/data-store';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,9 +18,9 @@ import { MarkdownContent } from '@/components/shared/markdown-content';
 import { generatePDF, downloadPDF } from '@/lib/pdf-generator';
 
 export function DocumentsView() {
-  const documents = useAppStore((s) => s.documents);
-  const addDocument = useAppStore((s) => s.addDocument);
-  const deleteDocument = useAppStore((s) => s.deleteDocument);
+  const documents = useDataStore((s) => s.documents);
+  const addDocument = useDataStore((s) => s.addDocument);
+  const deleteDocument = useDataStore((s) => s.deleteDocument);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [viewOpen, setViewOpen] = useState(false);

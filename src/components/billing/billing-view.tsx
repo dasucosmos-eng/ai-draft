@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useAppStore } from '@/store/app-store';
+import { useDataStore } from '@/store/data-store';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,10 +16,10 @@ import { Receipt, Plus, Search, IndianRupee, Trash2, CheckCircle2, FileText } fr
 import { generatePDF, downloadPDF } from '@/lib/pdf-generator';
 
 export function BillingView() {
-  const invoices = useAppStore((s) => s.invoices);
-  const addInvoice = useAppStore((s) => s.addInvoice);
-  const deleteInvoice = useAppStore((s) => s.deleteInvoice);
-  const updateInvoice = useAppStore((s) => s.updateInvoice);
+  const invoices = useDataStore((s) => s.invoices);
+  const addInvoice = useDataStore((s) => s.addInvoice);
+  const deleteInvoice = useDataStore((s) => s.deleteInvoice);
+  const updateInvoice = useDataStore((s) => s.updateInvoice);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [newInv, setNewInv] = useState({

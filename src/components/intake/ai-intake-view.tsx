@@ -13,6 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import { apiCall, getAuthToken } from '@/lib/api-client';
+import { useDataStore } from '@/store/data-store';
 import { useAppStore } from '@/store/app-store';
 import { useClientsStore } from '@/store/clients-store';
 import { v4 as uuidv4 } from 'uuid';
@@ -83,8 +84,8 @@ export function AiIntakeView() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [extractedTexts, setExtractedTexts] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const addCase = useAppStore((s) => s.addCase);
-  const addDocument = useAppStore((s) => s.addDocument);
+  const addCase = useDataStore((s) => s.addCase);
+  const addDocument = useDataStore((s) => s.addDocument);
   const setCurrentView = useAppStore((s) => s.setCurrentView);
   const addClient = useClientsStore((s) => s.addClient);
 

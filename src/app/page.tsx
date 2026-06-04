@@ -3,17 +3,14 @@
 import { useState, useEffect } from 'react';
 import { verifyAndRestore, handleTokenFromUrl } from '@/lib/auth-store';
 import { useAppStore } from '@/store/app-store';
-import { useProfileStore } from '@/store/profile-store';
-import { useClientsStore } from '@/store/clients-store';
-import { useSubscriptionStore } from '@/store/subscription-store';
 import { LoginView } from '@/components/auth/login-view';
 import { AppLayout } from '@/components/shared/app-layout';
 import { Loader2 } from 'lucide-react';
+import { loadAllCachedData } from '@/lib/db';
 
 export default function HomePage() {
   const [authState, setAuthState] = useState<'loading' | 'auth' | 'unauth'>('loading');
-  const dataLoaded = useAppStore((s) => s.dataLoaded);
-  const profile = useProfileStore((s) => s.profile);
+  const [dataReady, setDataReady] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -21,12 +18,19 @@ export default function HomePage() {
       const urlToken = await handleTokenFromUrl();
       if (urlToken) {
         setAuthState('auth');
+        setDataReady(true);
         return;
       }
 
       // Check existing token
       const valid = await verifyAndRestore();
-      setAuthState(valid ? 'auth' : 'unauth');
+      if (valid) {
+        setAuthState('auth');
+        // Small delay to let IndexedDB data propagate to stores
+        setTimeout(() => setDataReady(true), 100);
+      } else {
+        setAuthState('unauth');
+      }
     }
     init();
   }, []);
@@ -46,9 +50,8 @@ export default function HomePage() {
     return <LoginView />;
   }
 
-  // BUG #2 FIX: Wait for data to be fully loaded from Firestore before rendering UI
-  // This prevents showing empty dashboard (perceived data loss) while data is still loading
-  if (!dataLoaded) {
+  // Wait for IndexedDB data to hydrate stores
+  if (!dataReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">

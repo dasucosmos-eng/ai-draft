@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { useClientsStore } from '@/store/clients-store';
+import { useDataStore } from '@/store/data-store';
 import { useAppStore } from '@/store/app-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,8 +31,8 @@ export function ClientsView() {
   const addClient = useClientsStore((s) => s.addClient);
   const updateClient = useClientsStore((s) => s.updateClient);
   const deleteClient = useClientsStore((s) => s.deleteClient);
-  const cases = useAppStore((s) => s.cases);
-  const documents = useAppStore((s) => s.documents);
+  const cases = useDataStore((s) => s.cases);
+  const documents = useDataStore((s) => s.documents);
 
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -135,7 +136,7 @@ export function ClientsView() {
     // Find and update the document in the store
     const doc = documents.find(d => d.name === docViewerTitle);
     if (doc) {
-      const { updateDocument } = useAppStore.getState();
+      const { updateDocument } = useDataStore.getState();
       updateDocument(doc.id, { content });
       toast.success('Document saved to Firestore');
     }

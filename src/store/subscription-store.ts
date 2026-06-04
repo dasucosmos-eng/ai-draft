@@ -1,3 +1,10 @@
+/**
+ * Subscription Store — DELEGATED to sync-layer.
+ *
+ * This is a compatibility shim. New code should use `useSubscription()` from
+ * `@/hooks/use-user-data.ts` instead.
+ */
+
 import { create } from 'zustand';
 import type { SubscriptionData } from '@/lib/types';
 

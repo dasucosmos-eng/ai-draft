@@ -1,6 +1,13 @@
+/**
+ * Clients Store — DELEGATED to sync-layer.
+ *
+ * This is a compatibility shim. New code should use `useClients()` from
+ * `@/hooks/use-user-data.ts` instead.
+ */
+
 import { create } from 'zustand';
 import type { Client } from '@/lib/types';
-import { debouncedSave } from './app-store';
+import { addClient as syncAdd, updateClient as syncUpdate, removeClient as syncRemove } from '@/lib/sync-layer';
 
 interface ClientsState {
   clients: Client[];
@@ -11,24 +18,23 @@ interface ClientsState {
   clearClients: () => void;
 }
 
-export const useClientsStore = create<ClientsState>((set, get) => ({
+export const useClientsStore = create<ClientsState>((set) => ({
   clients: [],
 
   setClients: (clients) => set({ clients }),
   addClient: (c) => {
     set((s) => ({ clients: [c, ...s.clients] }));
-    // Use the same debounced save from app-store — no separate save
-    debouncedSave();
+    syncAdd(c);
   },
   updateClient: (id, updates) => {
     set((s) => ({
       clients: s.clients.map((c) => (c.id === id ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c)),
     }));
-    debouncedSave();
+    syncUpdate(id, updates);
   },
   deleteClient: (id) => {
     set((s) => ({ clients: s.clients.filter((c) => c.id !== id) }));
-    debouncedSave();
+    syncRemove(id);
   },
   clearClients: () => set({ clients: [] }),
 }));

@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import { aiDraft } from '@/lib/ai-service';
-import { useAppStore } from '@/store/app-store';
+import { useDataStore } from '@/store/data-store';
 import { generatePDF, downloadPDF } from '@/lib/pdf-generator';
 import { v4 as uuidv4 } from 'uuid';
 import { Loader2, FileText, Sparkles, Download, Save, AlertCircle } from 'lucide-react';
@@ -34,8 +34,8 @@ export function AiDraftingView() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState('');
-  const addDocument = useAppStore((s) => s.addDocument);
-  const cases = useAppStore((s) => s.cases);
+  const addDocument = useDataStore((s) => s.addDocument);
+  const cases = useDataStore((s) => s.cases);
 
   const filteredDocTypes = documentTypes.find((g) => g.group === caseType) || documentTypes[documentTypes.length - 1];
 

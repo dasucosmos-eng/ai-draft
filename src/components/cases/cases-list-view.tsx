@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useDataStore } from '@/store/data-store';
 import { useAppStore } from '@/store/app-store';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,11 +30,10 @@ import { format } from 'date-fns';
 import type { CaseItem } from '@/lib/types';
 
 export function CasesListView() {
-  const cases = useAppStore((s) => s.cases);
-  const addCase = useAppStore((s) => s.addCase);
-  const deleteCase = useAppStore((s) => s.deleteCase);
-  const setCurrentView = useAppStore((s) => s.setCurrentView);
-  const setSelectedCaseId = useAppStore((s) => s.setSelectedCaseId);
+  const cases = useDataStore((s) => s.cases);
+  const addCase = useDataStore((s) => s.addCase);
+  const deleteCase = useDataStore((s) => s.deleteCase);
+  const { setCurrentView, setSelectedCaseId } = useAppStore((s) => ({ setCurrentView: s.setCurrentView, setSelectedCaseId: s.setSelectedCaseId }));
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
