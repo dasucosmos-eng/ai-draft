@@ -229,6 +229,9 @@ export interface CivilMatter {
   updatedAt: string
 }
 
+/* ─── Sync status for UI feedback ─── */
+export type SyncStatus = 'idle' | 'saving' | 'saved' | 'error'
+
 /* ─── User-scoped Storage Adapter ─── */
 
 interface AppState {
@@ -302,6 +305,10 @@ interface AppState {
   // Firestore data loading state
   dataLoaded: boolean
   setDataLoaded: (loaded: boolean) => void
+
+  // Sync status — exposed to UI for user feedback
+  syncStatus: SyncStatus
+  lastSyncError: string | null
 }
 
 export const useAppStore = create<AppState>()(
@@ -344,8 +351,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           documents: state.documents.map(d => d.id === id ? { ...d, ...updates } : d)
         }))
-        // Immediately sync document content changes to Firestore (not debounced)
-        // to ensure edits are never lost on logout/navigation
+        // Immediately sync document content changes (not debounced)
         syncToFirestore()
       },
 
@@ -404,6 +410,10 @@ export const useAppStore = create<AppState>()(
       // Firestore data loading state
       dataLoaded: false,
       setDataLoaded: (loaded) => set({ dataLoaded: loaded }),
+
+      // Sync status for UI
+      syncStatus: 'idle' as SyncStatus,
+      lastSyncError: null as string | null,
     }),
     {
       name: 'aidraft_app',
@@ -418,20 +428,14 @@ export const useAppStore = create<AppState>()(
         executionMatters: state.executionMatters,
         civilMatters: state.civilMatters,
         _activeUid: state._activeUid,
-        // NOTE: Do NOT persist dataLoaded — it must always start as false
-        // to prevent hydration mismatch (error #310) on hard refresh.
-        // dataLoaded is set to true only after loadFromFirestore() completes.
+        // Do NOT persist: dataLoaded, syncStatus, lastSyncError
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          // CRITICAL: Check if the hydrated data belongs to the CURRENT logged-in user.
-          // If localStorage has data from a DIFFERENT user (different _activeUid),
-          // wipe it all to prevent cross-user data contamination.
           const currentUid = localStorage.getItem('aidraft_current_uid')
           if (state._activeUid && currentUid && state._activeUid !== currentUid) {
             console.warn(
-              `[app-store] UID mismatch! localStorage has uid=${state._activeUid} but current user is uid=${currentUid}.`,
-              'Wiping stale data to prevent cross-user contamination.'
+              `[app-store] UID mismatch! localStorage uid=${state._activeUid} vs current uid=${currentUid}. Wiping stale data.`
             )
             state.cases = []
             state.timelineEvents = []
@@ -443,7 +447,6 @@ export const useAppStore = create<AppState>()(
             state.civilMatters = []
             state._activeUid = currentUid
           } else {
-            // Same user or first login — sanitize as before
             try {
               if (state.cases?.length) state.cases = sanitizeCases(state.cases)
               if (state.timelineEvents?.length) state.timelineEvents = sanitizeTimeline(state.timelineEvents)
@@ -454,7 +457,6 @@ export const useAppStore = create<AppState>()(
               console.error('[app-store] Rehydration sanitization error:', e)
             }
           }
-          // Force dataLoaded=false to prevent hydration mismatch (#310)
           state.dataLoaded = false
         }
       },
@@ -464,34 +466,41 @@ export const useAppStore = create<AppState>()(
 
 
 
-/* ─── Firestore Sync ─── */
+/* ═══════════════════════════════════════════════════════════════════
+   Firestore Sync — SIMPLIFIED & ROBUST
+   ═══════════════════════════════════════════════════════════════════
+   
+   Design principles:
+   1. Firestore is the source of truth
+   2. On login: load everything from Firestore → populate stores
+   3. On mutation: debounce (3s) → save everything to Firestore
+   4. On tab hide/unload: flush immediately (fetch keepalive, NOT sendBeacon)
+   5. On tab visible: check for unsynced changes and sync
+   6. Errors are VISIBLE to the user via syncStatus
+   7. Manual "save now" available via forceSaveToFirestore()
+   
+   Key fix: BEFORE this rewrite, beforeunload used navigator.sendBeacon
+   which doesn't reliably set Content-Type: application/json on all
+   browsers. Firebase Cloud Functions' body-parser then failed to
+   parse req.body.action → returned "Unknown action: undefined" → 
+   data silently lost. Now we use fetch with keepalive:true instead.
+   ═══════════════════════════════════════════════════════════════════ */
 
-// Firestore is the source of truth. On load, we REPLACE local with remote data.
-// On mutation, we sync to Firestore after a debounce.
-// This ensures all browsers/devices see the same data.
+/* ─── Sanitization helpers ─── */
 
-/**
- * Sanitize data loaded from Firestore to prevent React rendering errors.
- * Ensures all fields expected to be primitives are primitives (not objects/undefined).
- * Firestore Timestamps are converted to ISO strings.
- */
-/** Convert Firestore Timestamp-like objects to ISO strings */
 function safeStr(val: unknown): string | undefined {
   if (val == null) return undefined
   if (typeof val === 'string') return val
   if (typeof val === 'number') return new Date(val).toISOString() || String(val)
   if (typeof val === 'boolean') return String(val)
   if (typeof val === 'object') {
-    // Firestore Timestamp serialized as { _seconds, _nanoseconds } or { seconds, nanoseconds }
     const obj = val as Record<string, unknown>
     const secs = obj._seconds ?? obj.seconds
     if (typeof secs === 'number') {
       const ms = (obj._nanoseconds ?? obj.nanoseconds ?? 0) as number / 1e6
       return new Date((secs as number) * 1000 + ms).toISOString()
     }
-    // Date object
     if (val instanceof Date) return val.toISOString()
-    // Fallback
     return undefined
   }
   return String(val)
@@ -533,7 +542,6 @@ function sanitizeCases(cases: any[]): CaseItem[] {
     reliefSought: safeStr(c.reliefSought),
     createdAt: safeStr(c.createdAt) || new Date().toISOString(),
     updatedAt: safeStr(c.updatedAt) || new Date().toISOString(),
-    // Arrays: filter to ensure strings only
     underSections: Array.isArray(c.underSections) ? c.underSections.map(String) : undefined,
     victimNames: Array.isArray(c.victimNames) ? c.victimNames.map(String) : undefined,
   }))
@@ -598,12 +606,13 @@ function sanitizeInvoices(invoices: any[]): InvoiceItem[] {
   }))
 }
 
+/* ─── Sync State ─── */
+
 let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let _syncInProgress = false
 let _lastSyncedHash = ''
-let _heartbeatInterval: ReturnType<typeof setInterval> | null = null
-let _heartbeatStarted = false
 let _dataInitialized = false // True ONLY after loadFromFirestore completes
+let _unloadRegistered = false
 
 /** Read clients from localStorage directly — avoids circular import */
 function getClientsFromLocalStorage(): unknown[] {
@@ -624,6 +633,23 @@ function getProfileFromLocalStorage(): unknown {
     const parsed = JSON.parse(raw)
     return parsed?.state?.profile || parsed?.profile || null
   } catch { return null }
+}
+
+/** Build the full save payload from current store state */
+function buildSavePayload(): Record<string, unknown> {
+  const state = useAppStore.getState()
+  const clients = getClientsFromLocalStorage()
+  const profile = getProfileFromLocalStorage()
+  return {
+    action: 'save',
+    cases: state.cases,
+    documents: state.documents,
+    tasks: state.tasks,
+    timelineEvents: state.timelineEvents,
+    invoices: state.invoices,
+    clients,
+    ...(profile ? { profile } : {}),
+  }
 }
 
 /** Compute a hash of all syncable data to detect unsynced changes */
@@ -651,96 +677,122 @@ function computeDataHash(): string {
   } catch { return '' }
 }
 
-/**
- * Merge two arrays by ID — remote is source of truth, local-only items are preserved.
- */
-function mergeById<T extends { id: string }>(remote: T[], local: T[]): T[] {
-  const remoteIds = new Set(remote.map(item => item.id))
-  const merged = [...remote]
-  for (const localItem of local) {
-    if (!remoteIds.has(localItem.id)) {
-      merged.push(localItem)
-    }
+/** Update the sync status in the store */
+function setSyncStatus(status: SyncStatus, error?: string): void {
+  useAppStore.setState({
+    syncStatus: status,
+    lastSyncError: error || null,
+  })
+  // Auto-clear 'saved' and 'error' status after 4 seconds
+  if (status === 'saved' || status === 'error') {
+    setTimeout(() => {
+      if (useAppStore.getState().syncStatus === status) {
+        setSyncStatus('idle')
+      }
+    }, 4000)
   }
-  return merged
 }
 
 /**
- * Sync ALL user data to Firestore (cases + documents + tasks + timeline + invoices + clients).
- * GUARD: Only syncs after data has been initialized (loadFromFirestore completed).
- * This prevents the heartbeat from sending EMPTY data before load completes.
+ * Core sync function — sends ALL user data to Firestore.
+ * Uses fetch (NOT sendBeacon) for reliable Content-Type handling.
+ * Retries up to 5 times with exponential backoff.
+ * Updates syncStatus in the store so the UI can show feedback.
  */
 export async function syncToFirestore(retryCount = 0): Promise<boolean> {
   const token = localStorage.getItem('aidraft_auth_token')
-  if (!token || _syncInProgress) return false
-  // CRITICAL GUARD: Don't sync until data is loaded from Firestore.
-  // Without this, the heartbeat could send empty data and overwrite Firestore.
-  if (!_dataInitialized) return false
+  if (!token) return false
+  if (_syncInProgress) return false
+  if (!_dataInitialized) {
+    console.warn('[sync] BLOCKED: data not initialized yet (loadFromFirestore not completed)')
+    return false
+  }
 
   _syncInProgress = true
+  setSyncStatus('saving')
+
   try {
+    const payload = buildSavePayload()
     const state = useAppStore.getState()
-    const clients = getClientsFromLocalStorage()
-    const profile = getProfileFromLocalStorage()
-    const payload = {
-      action: 'save',
-      cases: state.cases,
-      documents: state.documents,
-      tasks: state.tasks,
-      timelineEvents: state.timelineEvents,
-      invoices: state.invoices,
-      clients,
-      ...(profile ? { profile } : {}),
-    }
-    console.log('[app-store] Syncing to Firestore:', {
+
+    console.log('[sync] Saving to Firestore:', {
       cases: state.cases.length,
       docs: state.documents.length,
-      clients: Array.isArray(clients) ? clients.length : 0,
-      hasProfile: !!profile,
-      retry: retryCount,
+      tasks: state.tasks.length,
+      clients: Array.isArray(getClientsFromLocalStorage()) ? getClientsFromLocalStorage().length : 0,
+      hasProfile: !!getProfileFromLocalStorage(),
+      attempt: retryCount + 1,
     })
+
     const res = await fetch('/api/user-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify(payload),
     })
+
+    // Read response body for debugging
+    let responseBody: any = null
+    try { responseBody = await res.json() } catch { /* ignore parse error */ }
+
     if (!res.ok) {
-      console.error('[app-store] Sync HTTP error:', res.status)
+      const errMsg = `HTTP ${res.status}: ${responseBody?.error || 'Unknown'}`
+      console.error('[sync] FAILED:', errMsg, responseBody)
+
       _syncInProgress = false
-      if (res.status >= 500 && retryCount < 3) {
+
+      if (retryCount < 5) {
         const delay = Math.pow(2, retryCount) * 1000
-        console.warn(`[app-store] Retrying sync in ${delay}ms (attempt ${retryCount + 1}/3)`)
+        console.warn(`[sync] Retrying in ${delay}ms (attempt ${retryCount + 2}/6)`)
         await new Promise(r => setTimeout(r, delay))
         return syncToFirestore(retryCount + 1)
       }
+
+      // All retries exhausted — show error to user
+      setSyncStatus('error', `Save failed: ${errMsg}`)
       return false
     }
+
+    // Check for server-side warning (anti-data-loss block)
+    if (responseBody?.warning) {
+      console.warn('[sync] Server warning:', responseBody.warning)
+    }
+
     _lastSyncedHash = computeDataHash()
-    console.log('[app-store] Synced to Firestore successfully')
+    console.log('[sync] SUCCESS — data saved to Firestore')
+    setSyncStatus('saved')
     _syncInProgress = false
     return true
   } catch (err) {
-    console.error('[app-store] Sync error:', err)
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.error('[sync] ERROR:', errMsg)
+
     _syncInProgress = false
-    if (retryCount < 3) {
+
+    if (retryCount < 5) {
       const delay = Math.pow(2, retryCount) * 1000
-      console.warn(`[app-store] Retrying sync in ${delay}ms (attempt ${retryCount + 1}/3)`)
+      console.warn(`[sync] Retrying in ${delay}ms (attempt ${retryCount + 2}/6)`)
       await new Promise(r => setTimeout(r, delay))
       return syncToFirestore(retryCount + 1)
     }
+
+    setSyncStatus('error', `Network error: ${errMsg}`)
     return false
   }
 }
 
+/** Debounced sync — 3 second delay to batch rapid edits */
 function debouncedSync(): void {
   if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer)
   _syncDebounceTimer = setTimeout(() => {
     _syncDebounceTimer = null
     syncToFirestore().catch(() => {})
-  }, 2000)
+  }, 3000)
 }
 
-/** Flush pending sync immediately — call before logout */
+/** Flush any pending debounced sync + sync immediately */
 export async function flushSyncToFirestore(): Promise<void> {
   if (_syncDebounceTimer) {
     clearTimeout(_syncDebounceTimer)
@@ -750,48 +802,57 @@ export async function flushSyncToFirestore(): Promise<void> {
 }
 
 /**
- * THREE LAYERS of data protection — ensures data is NEVER lost:
- *
- * Layer 1: Debounced sync (2s) — fast feedback after edits
- * Layer 2: Periodic heartbeat (15s) — catches any data that missed the debounce
- * Layer 3: beforeunload sendBeacon — absolute last resort when closing tab
- *
- * CRITICAL FIX: Heartbeat only starts AFTER data is initialized.
- * Before initialization, syncs are suppressed to prevent sending empty data.
+ * Force save — for manual "Save Now" button.
+ * Always syncs regardless of hash or initialization state.
  */
-let _unloadRegistered = false
+export async function forceSaveToFirestore(): Promise<boolean> {
+  const token = localStorage.getItem('aidraft_auth_token')
+  if (!token) {
+    setSyncStatus('error', 'Not logged in')
+    return false
+  }
 
+  // Force initialization so the guard doesn't block us
+  _dataInitialized = true
+
+  _syncInProgress = false // Reset to allow this sync
+  return syncToFirestore()
+}
+
+/**
+ * Register unload/visibility handlers.
+ * CRITICAL FIX: Uses fetch with keepalive:true instead of navigator.sendBeacon.
+ * sendBeacon doesn't reliably set Content-Type on all browsers, causing
+ * the Firebase Cloud Function to fail parsing req.body → "Unknown action".
+ * fetch with keepalive:true properly sets Content-Type: application/json.
+ */
 export function setupSyncOnUnload(): void {
   if (_unloadRegistered || typeof window === 'undefined') return
   _unloadRegistered = true
 
-  // LAYER 3: beforeunload — ALWAYS flush if data has changed
+  // BEFOREUNLOAD: flush via fetch+keepalive (NOT sendBeacon)
   const handler = () => {
     const token = localStorage.getItem('aidraft_auth_token')
-    if (!token) return
-    // Only send if data was loaded at least once
+    if (!token || !_dataInitialized) return
+
     const currentHash = computeDataHash()
-    if (currentHash !== _lastSyncedHash) {
-      const state = useAppStore.getState()
-      const clients = getClientsFromLocalStorage()
-      const profile = getProfileFromLocalStorage()
-      const payload = JSON.stringify({
-        action: 'save',
-        cases: state.cases,
-        documents: state.documents,
-        tasks: state.tasks,
-        timelineEvents: state.timelineEvents,
-        invoices: state.invoices,
-        clients,
-        ...(profile ? { profile } : {}),
-        _token: token,
-      })
-      const blob = new Blob([payload], { type: 'application/json' })
-      navigator.sendBeacon('/api/user-data', blob)
-      console.log('[app-store] beforeunload: synced', {
-        cases: state.cases.length, clients: clients.length, hasProfile: !!profile
-      })
-    }
+    if (currentHash === _lastSyncedHash) return // nothing to save
+
+    const payload = buildSavePayload()
+    // Use fetch with keepalive — reliable Content-Type header
+    fetch('/api/user-data', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+      keepalive: true, // survive page unload
+    }).catch((err) => {
+      console.error('[sync] beforeunload fetch failed:', err)
+    })
+
+    console.log('[sync] beforeunload: flush initiated')
     if (_syncDebounceTimer) {
       clearTimeout(_syncDebounceTimer)
       _syncDebounceTimer = null
@@ -799,19 +860,39 @@ export function setupSyncOnUnload(): void {
   }
   window.addEventListener('beforeunload', handler)
 
-  // VISIBILITY: sync on tab hidden + sync on tab visible
+  // VISIBILITYCHANGE: sync on hidden, check on visible
   const visibilityHandler = () => {
     if (document.visibilityState === 'hidden') {
+      // Flush debounced sync immediately
       if (_syncDebounceTimer) {
         clearTimeout(_syncDebounceTimer)
         _syncDebounceTimer = null
       }
-      syncToFirestore().catch(() => {})
+      // Sync with keepalive (survives if tab is closed while hidden)
+      const token = localStorage.getItem('aidraft_auth_token')
+      if (token && _dataInitialized) {
+        const currentHash = computeDataHash()
+        if (currentHash !== _lastSyncedHash) {
+          const payload = buildSavePayload()
+          fetch('/api/user-data', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(payload),
+            keepalive: true,
+          }).catch(() => {})
+        }
+      }
     } else if (document.visibilityState === 'visible') {
-      const currentHash = computeDataHash()
-      if (currentHash !== _lastSyncedHash && !_syncInProgress) {
-        console.log('[app-store] Tab visible: syncing unsynced data')
-        syncToFirestore().catch(() => {})
+      const token = localStorage.getItem('aidraft_auth_token')
+      if (token && _dataInitialized) {
+        const currentHash = computeDataHash()
+        if (currentHash !== _lastSyncedHash && !_syncInProgress) {
+          console.log('[sync] Tab visible: syncing unsynced data')
+          syncToFirestore().catch(() => {})
+        }
       }
     }
   }
@@ -819,25 +900,9 @@ export function setupSyncOnUnload(): void {
 }
 
 /**
- * Start the heartbeat AFTER data is loaded from Firestore.
- * Called at the end of loadFromFirestore().
- * This prevents the race condition where heartbeat sends empty data
- * before loadFromFirestore completes.
+ * Load ALL user data from Firestore and populate stores.
+ * This is the SINGLE entry point for loading data after auth.
  */
-function startHeartbeat(): void {
-  if (_heartbeatStarted || typeof window === 'undefined') return
-  _heartbeatStarted = true
-  _heartbeatInterval = setInterval(() => {
-    const token = localStorage.getItem('aidraft_auth_token')
-    if (!token || !_dataInitialized) return
-    const currentHash = computeDataHash()
-    if (currentHash && currentHash !== _lastSyncedHash && !_syncInProgress) {
-      console.log('[app-store] Heartbeat: syncing unsynced data')
-      syncToFirestore().catch(() => {})
-    }
-  }, 15000)
-}
-
 export async function loadFromFirestore(retryCount = 0): Promise<void> {
   const token = localStorage.getItem('aidraft_auth_token')
   if (!token) {
@@ -862,6 +927,7 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
   }
 
   try {
+    console.log('[load] Fetching user data from Firestore...')
     const res = await fetch('/api/user-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -869,7 +935,7 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
     })
 
     if (!res.ok) {
-      console.error('[app-store] Firestore load HTTP error:', res.status)
+      console.error('[load] HTTP error:', res.status)
       if (res.status === 401 || retryCount >= 3) {
         useAppStore.getState().setDataLoaded(true)
         return
@@ -879,6 +945,16 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
     }
 
     const data = await res.json()
+    console.log('[load] Response:', {
+      success: data.success,
+      hasData: !!data.data,
+      casesCount: data.data?.cases?.length || 0,
+      docsCount: data.data?.documents?.length || 0,
+      tasksCount: data.data?.tasks?.length || 0,
+      clientsCount: data.data?.clients?.length || 0,
+      hasProfile: !!data.data?.profile,
+    })
+
     if (data.success && data.data) {
       const d = data.data
       const state = useAppStore.getState()
@@ -886,93 +962,80 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
       if (d.cases && d.cases.length > 0) {
         state.setCases(sanitizeCases(d.cases))
       } else if (localHasDataToMigrate && state.cases.length > 0) {
-        console.log('[app-store] Local has', state.cases.length, 'cases not in Firestore — will migrate')
+        console.log('[load] Local has', state.cases.length, 'cases not in Firestore — will migrate')
       }
 
       if (d.documents && d.documents.length > 0) {
         state.setDocuments(sanitizeDocuments(d.documents))
       } else if (localHasDataToMigrate && state.documents.length > 0) {
-        console.log('[app-store] Local has', state.documents.length, 'documents not in Firestore — will migrate')
+        console.log('[load] Local has', state.documents.length, 'documents not in Firestore — will migrate')
       }
 
       if (d.tasks && d.tasks.length > 0) {
         state.setTasks(sanitizeTasks(d.tasks))
       } else if (localHasDataToMigrate && state.tasks.length > 0) {
-        console.log('[app-store] Local has', state.tasks.length, 'tasks not in Firestore — will migrate')
+        console.log('[load] Local has', state.tasks.length, 'tasks not in Firestore — will migrate')
       }
 
       if (d.timelineEvents && d.timelineEvents.length > 0) {
         state.setTimelineEvents(sanitizeTimeline(d.timelineEvents))
       } else if (localHasDataToMigrate && state.timelineEvents.length > 0) {
-        console.log('[app-store] Local has', state.timelineEvents.length, 'events not in Firestore — will migrate')
+        console.log('[load] Local has', state.timelineEvents.length, 'events not in Firestore — will migrate')
       }
 
       if (d.invoices && d.invoices.length > 0) {
         state.setInvoices(sanitizeInvoices(d.invoices))
       }
 
-      console.log('[app-store] Loaded data from Firestore:', {
-        cases: d.cases?.length || 0,
-        documents: d.documents?.length || 0,
-        tasks: d.tasks?.length || 0,
-        clients: d.clients?.length || 0,
-        hasProfile: !!d.profile,
-      })
-
-      // Load profile from the SAME response — avoids a separate API call
+      // Load profile from the SAME response
       if (d.profile) {
         try {
           const { useProfileStore } = await import('./profile-store')
           const profileStore = useProfileStore.getState()
-          // Firestore is authoritative — always overwrite local with remote profile
           if (d.profile.isComplete || d.profile.fullName) {
             profileStore.setProfile(d.profile)
             profileStore.setFirestoreStatus('loaded')
-            console.log('[app-store] Loaded profile from Firestore (isComplete:', d.profile.isComplete, ')')
+            console.log('[load] Profile loaded from Firestore (isComplete:', d.profile.isComplete, ')')
           }
         } catch (e) {
-          console.error('[app-store] Failed to load profile from Firestore response:', e)
+          console.error('[load] Failed to load profile:', e)
         }
       }
 
-      // Load clients from the SAME response — avoids a separate API call
+      // Load clients from the SAME response
       if (d.clients && d.clients.length > 0) {
         try {
           const { useClientsStore } = await import('./clients-store')
           useClientsStore.setState({ clients: d.clients })
-          console.log('[app-store] Loaded clients from Firestore:', d.clients.length)
+          console.log('[load] Clients loaded from Firestore:', d.clients.length)
         } catch (e) {
-          console.error('[app-store] Failed to load clients from Firestore response:', e)
+          console.error('[load] Failed to load clients:', e)
         }
       }
 
       // MIGRATION: Push any local-only data to Firestore
       if (localHasDataToMigrate) {
-        console.log('[app-store] Running migration — syncing local data to Firestore')
+        console.log('[load] Migrating local data to Firestore...')
         _dataInitialized = true // Allow sync during migration
         await syncToFirestore()
       }
     }
 
-    // CRITICAL: Mark data as initialized and compute baseline hash
-    // This enables the heartbeat WITHOUT race conditions
+    // Mark data as initialized
     _dataInitialized = true
     _lastSyncedHash = computeDataHash()
-    startHeartbeat()
-    console.log('[app-store] Data initialized, heartbeat started')
+    console.log('[load] Data initialized successfully')
   } catch (err) {
-    console.error('[app-store] Firestore load error:', err)
+    console.error('[load] Error:', err)
     if (retryCount < 3) {
       const delay = Math.pow(2, retryCount) * 1000
-      console.warn(`[app-store] Retrying Firestore load in ${delay}ms (attempt ${retryCount + 1}/3)`)
+      console.warn(`[load] Retrying in ${delay}ms (attempt ${retryCount + 2}/4)`)
       await new Promise(r => setTimeout(r, delay))
       return loadFromFirestore(retryCount + 1)
     }
-    console.error('[app-store] All Firestore load retries exhausted — keeping local data')
-    // Even on failure, mark as initialized so edits can sync
+    console.error('[load] All retries exhausted — keeping local data')
     _dataInitialized = true
     _lastSyncedHash = computeDataHash()
-    startHeartbeat()
   }
 
   useAppStore.getState().setDataLoaded(true)

@@ -86,6 +86,22 @@ const handler = async (req: Request, res: Response) => {
     return res.status(204).send();
   }
 
+  // SAFETY: If req.body is not parsed (e.g., Content-Type was text/plain instead
+  // of application/json), try to parse the raw body manually.
+  // This can happen with certain browsers' sendBeacon or fetch keepalive.
+  let body = req.body;
+  if (!body || typeof body === 'string') {
+    try {
+      body = JSON.parse(typeof body === 'string' ? body : (req.rawBody || '{}'));
+    } catch {
+      body = {};
+    }
+  }
+  // If body is still not an object, give up
+  if (!body || typeof body !== 'object') body = {};
+  // Reassign to req.body so downstream code works unchanged
+  req.body = body;
+
   const uid = await verifyUid(req);
   if (!uid) {
     return res.status(401).json({ error: "Unauthorized" });
