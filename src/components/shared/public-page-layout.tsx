@@ -1,54 +1,47 @@
-'use client'
-
-import Link from 'next/link'
-import { ArrowLeft, Scale } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { SiteFooter } from '@/components/shared/site-footer'
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Scale } from 'lucide-react';
+import Link from 'next/link';
 
 interface PublicPageLayoutProps {
-  children: React.ReactNode
-  title: string
+  title: string;
+  children: React.ReactNode;
 }
 
-export function PublicPageLayout({ children, title }: PublicPageLayoutProps) {
+export function PublicPageLayout({ title, children }: PublicPageLayoutProps) {
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="shrink-0 border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground">
-                <ArrowLeft className="size-4" />
-                <span className="text-xs">Back to AI Draft</span>
-              </Button>
-            </Link>
+      <header className="border-b border-border bg-card/80 backdrop-blur-sm">
+        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+            <Scale className="h-4 w-4 text-primary" />
           </div>
-          <Link href="/" className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-primary/15 border border-primary/20 overflow-hidden">
-              <Scale className="size-4 text-primary" />
-            </div>
-            <span className="text-sm font-bold text-foreground">AI Draft</span>
+          <span className="text-sm font-semibold">AI Draft Bond</span>
+          <Link href="/" className="ml-auto">
+            <Button variant="outline" size="sm">Back to Home</Button>
           </Link>
-          <div className="w-[120px]" /> {/* Spacer for centering */}
         </div>
       </header>
 
       {/* Content */}
       <main className="flex-1">
-        <div className="max-w-4xl mx-auto px-6 py-10">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-foreground tracking-tight">{title}</h1>
-            <div className="mt-2 h-1 w-16 bg-gradient-to-r from-primary to-primary/40 rounded-full" />
-          </div>
-          <div className="prose-custom">
-            {children}
-          </div>
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          <h1 className="text-2xl font-bold tracking-tight mb-6">{title}</h1>
+          <Card className="border-border/50">
+            <CardContent className="p-6 prose prose-sm dark:prose-invert max-w-none">
+              {children}
+            </CardContent>
+          </Card>
         </div>
       </main>
 
       {/* Footer */}
-      <SiteFooter />
+      <footer className="border-t border-border py-4">
+        <div className="max-w-3xl mx-auto px-4 text-center text-xs text-muted-foreground">
+          © {new Date().getFullYear()} AI Draft Bond. All rights reserved.
+        </div>
+      </footer>
     </div>
-  )
+  );
 }

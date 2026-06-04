@@ -1,350 +1,113 @@
-import { create } from 'zustand'
+import { apiCall, apiGet, getApiBaseUrl, setAuthToken, setCurrentUid, clearAuth } from '@/lib/api-client';
+import { useAppStore } from '@/store/app-store';
+import { useProfileStore } from '@/store/profile-store';
+import { useClientsStore } from '@/store/clients-store';
+import { useSubscriptionStore } from '@/store/subscription-store';
 
-const API_BASE = typeof window !== 'undefined' && (window as any).__API_BASE__
-  ? (window as any).__API_BASE__
-  : 'https://aidraft.bond/api'
-
-export interface AuthUser {
-  uid: string
-  email: string | null
-  displayName: string | null
-  phoneNumber: string | null
-  photoURL: string | null
-  provider: string
-}
-
-interface AuthState {
-  user: AuthUser | null
-  loading: boolean
-  error: string | null
-  phoneSessionId: string | null
-  phoneInProgress: boolean
-  _restoring: boolean
-
-  phoneOTP: string | null
-
-  setUser: (user: AuthUser | null) => void
-  setLoading: (loading: boolean) => void
-  setError: (error: string | null) => void
-  clearError: () => void
-  loginWithGoogle: () => Promise<void>
-  handleGoogleCredential: (credential: string) => Promise<void>
-  loginWithEmail: (email: string, password: string) => Promise<void>
-  signUpWithEmail: (email: string, password: string, displayName?: string) => Promise<void>
-  sendPhoneOTP: (phoneNumber: string) => Promise<void>
-  verifyPhoneOTP: (otp: string) => Promise<void>
-  logout: () => Promise<void>
-  syncToCRM: (user: AuthUser) => Promise<void>
-  restoreSession: () => Promise<void>
-}
-
-async function apiPost<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
-  const url = endpoint.startsWith('/') ? `${API_BASE}${endpoint}` : `${API_BASE}/${endpoint}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
-  return data as T
-}
-
-interface AuthResponse {
-  success: boolean
-  token?: string
-  user?: AuthUser
-  error?: string
-}
-
-/* ─── Centralized post-auth data loading ─── */
-
-async function loadUserDataAfterAuth(): Promise<void> {
-  // Reset dataLoaded so UI shows loading state during fetch
-  const { useAppStore } = await import('@/store/app-store')
-  useAppStore.getState().setDataLoaded(false)
-
-  // CRITICAL FIX: Register beforeunload/visibilitychange handlers to flush
-  // pending Firestore syncs when the user closes the tab or switches away.
-  // This prevents data loss — the root cause of cross-browser inconsistency.
-  const { setupSyncOnUnload } = await import('@/store/app-store')
-  setupSyncOnUnload()
-
-  // Safety timeout: if all loads take more than 8s, force dataLoaded=true
-  const safetyTimer = setTimeout(() => {
-    if (!useAppStore.getState().dataLoaded) {
-      console.warn('[auth-store] Safety timeout — forcing dataLoaded=true')
-      useAppStore.getState().setDataLoaded(true)
-    }
-  }, 8000)
-
+export async function loadAllUserData(uid: string, token: string): Promise<void> {
   try {
-    // CRITICAL: loadFromFirestore is the SINGLE source of truth load.
-    // It fetches ALL user data (cases, documents, tasks, timeline, invoices,
-    // clients, profile) in ONE API call and populates ALL stores.
-    // Profile-store and clients-store loads are now handled INSIDE loadFromFirestore.
-    await import('@/store/app-store').then(m => m.loadFromFirestore())
-
-    // Set profile store status to loaded so UI doesn't show popup incorrectly
-    try {
-      const { useProfileStore } = await import('@/store/profile-store')
-      if (useProfileStore.getState().firestoreStatus !== 'loaded') {
-        useProfileStore.getState().setFirestoreStatus('loaded')
-      }
-    } catch (e) {
-      console.error('[auth-store] Failed to set profile status:', e)
+    const result = await apiCall('/user-data', { action: 'load', uid }, token);
+    if (result.success && result.data) {
+      useAppStore.getState().loadFromFirestoreData(result.data);
+      useProfileStore.getState().loadProfile(result.data.profile);
+      useClientsStore.getState().setClients(result.data.clients || []);
+      useSubscriptionStore.getState().setSubscription(result.data.subscription);
+    } else {
+      // New user — no data yet, just mark as loaded
+      useAppStore.getState().loadFromFirestoreData({});
+      useProfileStore.getState().loadProfile(undefined);
+      useClientsStore.getState().setClients([]);
+      useSubscriptionStore.getState().setSubscription(undefined);
     }
   } catch (err) {
-    console.error('[auth-store] CRITICAL: loadFromFirestore failed:', err)
-  } finally {
-    clearTimeout(safetyTimer)
-    // Ensure dataLoaded is always true after load completes (success or failure)
-    useAppStore.getState().setDataLoaded(true)
+    // If load fails (e.g., new user, no Firestore doc yet), start fresh
+    console.warn('Failed to load user data (may be new user):', err);
+    useAppStore.getState().loadFromFirestoreData({});
+    useProfileStore.getState().loadProfile(undefined);
+    useClientsStore.getState().setClients([]);
+    useSubscriptionStore.getState().setSubscription(undefined);
   }
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
-  user: null,
-  loading: true,
-  error: null,
-  phoneSessionId: null,
-  phoneOTP: null,
+export async function verifyAndRestore(): Promise<boolean> {
+  const token = localStorage.getItem('aidraft_auth_token');
+  const uid = localStorage.getItem('aidraft_current_uid');
+  if (!token || !uid) return false;
 
-  setUser: (user) => set({ user, loading: false, error: null }),
-  setLoading: (loading) => set({ loading }),
-  setError: (error) => set({ error, loading: false }),
-  clearError: () => set({ error: null }),
-
-  restoreSession: async () => {
-    if (get()._restoring) return
-    set({ _restoring: true, loading: true })
-    try {
-      const urlParams = new URLSearchParams(window.location.search)
-      const urlToken = urlParams.get('token')
-      const urlError = urlParams.get('error')
-      const urlErrorDetail = urlParams.get('error_detail')
-
-      // Clean URL params immediately to prevent re-processing
-      if (window.location.search) {
-        window.history.replaceState({}, document.title, window.location.pathname)
-      }
-
-      if (urlError) {
-        if (urlError === 'oauth_not_configured') {
-          set({ user: null, loading: false, _restoring: false, error: 'Google sign-in is being configured. Please use email or phone to sign in.' })
-        } else {
-          const detailMap: Record<string, string> = {
-            'redirect_uri_mismatch': 'OAuth redirect URI mismatch. Add "https://aidraft.bond/api/auth-google-callback" in Google Cloud Console > APIs & Services > Credentials > OAuth client > Authorized redirect URIs.',
-            'access_denied': 'Google sign-in was denied. You may need to be added as a test user if the app is in Testing mode.',
-            'invalid_request': `Invalid OAuth request: ${urlErrorDetail || 'unknown'}`,
-            'unauthorized_client': 'This OAuth client is not authorized. Check the client config in Google Cloud Console.',
-            'token_exchange_failed': `Token exchange failed: ${urlErrorDetail || 'unknown'}`,
-            'no_user_info': `Could not get user info from Google: ${urlErrorDetail || 'unknown'}`,
-            'google_signin_failed': `Server error during sign-in: ${urlErrorDetail || 'unknown'}`,
-            'missing_code': 'No authorization code received from Google.',
-          }
-          const message = detailMap[urlError] || `Google sign-in error: ${urlError}${urlErrorDetail ? ' — ' + urlErrorDetail : ''}`
-          console.error('[restoreSession] Google OAuth error:', urlError, urlErrorDetail)
-          set({ user: null, loading: false, _restoring: false, error: message })
-        }
-        return
-      }
-
-      // Handle OAuth callback: token from redirect flow
-      if (urlToken) {
-        localStorage.setItem('aidraft_auth_token', urlToken)
-        try {
-          const data = await apiPost<AuthResponse>('/auth-verify', { token: urlToken })
-          if (data.success && data.user) {
-            localStorage.setItem('aidraft_current_uid', data.user.uid)
-            set({ user: data.user, loading: false, _restoring: false })
-            get().syncToCRM(data.user)
-            loadUserDataAfterAuth()
-            return
-          }
-        } catch {
-          localStorage.removeItem('aidraft_auth_token')
-        }
-      }
-
-      // Restore session from localStorage token
-      const token = localStorage.getItem('aidraft_auth_token')
-      if (!token) {
-        set({ user: null, loading: false, _restoring: false })
-        return
-      }
-      const data = await apiPost<AuthResponse>('/auth-verify', { token })
-      if (data.success && data.user) {
-        localStorage.setItem('aidraft_current_uid', data.user.uid)
-        set({ user: data.user, loading: false, _restoring: false })
-        // Load profile and data from Firestore in background
-        loadUserDataAfterAuth()
-      } else {
-        localStorage.removeItem('aidraft_auth_token')
-        set({ user: null, loading: false, _restoring: false })
-      }
-    } catch (err) {
-      console.error('[restoreSession] Unexpected error:', err)
-      localStorage.removeItem('aidraft_auth_token')
-      set({ user: null, loading: false, _restoring: false })
+  try {
+    const result = await apiCall('/auth-verify', { token }, token);
+    if (result.success) {
+      await loadAllUserData(uid, token);
+      return true;
     }
-  },
+    clearAuth();
+    return false;
+  } catch {
+    clearAuth();
+    return false;
+  }
+}
 
-  loginWithGoogle: async () => {
-    set({ loading: true, error: null })
-    try {
-      window.location.href = `${API_BASE}/auth-google-url`
-    } catch (err: any) {
-      console.error('[loginWithGoogle]', err)
-      set({ error: err?.message || 'Google sign-in failed', loading: false })
+export async function googleAuth(): Promise<void> {
+  // The Cloud Function returns a 302 redirect directly — just navigate to it
+  window.location.href = `${getApiBaseUrl()}/auth-google-url`;
+}
+
+export async function emailSignup(email: string, password: string, displayName: string): Promise<{ token: string; uid: string }> {
+  const result = await apiCall('/auth-email-signup', { email, password, displayName });
+  setAuthToken(result.token);
+  setCurrentUid(result.user.uid);
+  await loadAllUserData(result.user.uid, result.token);
+  return { token: result.token, uid: result.user.uid };
+}
+
+export async function emailSignin(email: string, password: string): Promise<{ token: string; uid: string }> {
+  const result = await apiCall('/auth-email-signin', { email, password });
+  setAuthToken(result.token);
+  setCurrentUid(result.user.uid);
+  await loadAllUserData(result.user.uid, result.token);
+  return { token: result.token, uid: result.user.uid };
+}
+
+export async function phoneSendOtp(phoneNumber: string): Promise<{ sessionId: string }> {
+  const result = await apiCall('/auth-phone-send', { phoneNumber });
+  return { sessionId: result.sessionId };
+}
+
+export async function phoneVerifyOtp(phoneNumber: string, otp: string, sessionId: string): Promise<{ token: string; uid: string }> {
+  const result = await apiCall('/auth-phone-verify', { phoneNumber, otp, sessionId });
+  setAuthToken(result.token);
+  setCurrentUid(result.user.uid);
+  await loadAllUserData(result.user.uid, result.token);
+  return { token: result.token, uid: result.user.uid };
+}
+
+export async function handleTokenFromUrl(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (!token) return false;
+
+  try {
+    const result = await apiCall('/auth-verify', { token }, token);
+    if (result.success) {
+      setAuthToken(token);
+      setCurrentUid(result.user.uid);
+      await loadAllUserData(result.user.uid, token);
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+      return true;
     }
-  },
+    return false;
+  } catch {
+    return false;
+  }
+}
 
-  handleGoogleCredential: async (credential: string) => {
-    set({ loading: true, error: null })
-    try {
-      const data = await apiPost<AuthResponse>('/auth-google', { idToken: credential })
-      if (data.success && data.token && data.user) {
-        localStorage.setItem('aidraft_auth_token', data.token)
-        localStorage.setItem('aidraft_current_uid', data.user.uid)
-        set({ user: data.user, loading: false })
-        get().syncToCRM(data.user)
-        loadUserDataAfterAuth()
-      } else {
-        throw new Error(data.error || 'Google sign-in failed')
-      }
-    } catch (err: any) {
-      console.error('[auth-google]', err)
-      set({ error: err?.message || 'Google sign-in failed', loading: false })
-    }
-  },
-
-  loginWithEmail: async (email: string, password: string) => {
-    set({ loading: true, error: null })
-    try {
-      const data = await apiPost<AuthResponse>('/auth-email-signin', { email, password })
-      if (data.success && data.token && data.user) {
-        localStorage.setItem('aidraft_auth_token', data.token)
-        localStorage.setItem('aidraft_current_uid', data.user.uid)
-        set({ user: data.user, loading: false })
-        get().syncToCRM(data.user)
-        loadUserDataAfterAuth()
-      } else {
-        throw new Error(data.error || 'Sign-in failed')
-      }
-    } catch (err: any) {
-      set({ error: err?.message || 'Sign-in failed', loading: false })
-    }
-  },
-
-  signUpWithEmail: async (email: string, password: string, displayName?: string) => {
-    set({ loading: true, error: null })
-    try {
-      const data = await apiPost<AuthResponse>('/auth-email-signup', { email, password, displayName })
-      if (data.success && data.token && data.user) {
-        localStorage.setItem('aidraft_auth_token', data.token)
-        localStorage.setItem('aidraft_current_uid', data.user.uid)
-        set({ user: data.user, loading: false })
-        get().syncToCRM(data.user)
-        loadUserDataAfterAuth()
-      } else {
-        throw new Error(data.error || 'Account creation failed')
-      }
-    } catch (err: any) {
-      set({ error: err?.message || 'Account creation failed', loading: false })
-    }
-  },
-
-  sendPhoneOTP: async (phoneNumber: string) => {
-    set({ loading: true, error: null, phoneInProgress: true, phoneOTP: null })
-    try {
-      const formatted = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`
-      const data = await apiPost<{ success: boolean; sessionId: string; otp?: string; message: string }>('/auth-phone-send', { phoneNumber: formatted })
-      if (data.success && data.sessionId) {
-        set({ phoneSessionId: data.sessionId, phoneOTP: data.otp || null, loading: false })
-      } else {
-        throw new Error('Failed to send OTP')
-      }
-    } catch (err: any) {
-      set({ error: err?.message || 'Failed to send OTP', loading: false, phoneInProgress: false })
-    }
-  },
-
-  verifyPhoneOTP: async (otp: string) => {
-    set({ loading: true, error: null })
-    try {
-      const { phoneSessionId: sessionId } = get()
-      if (!sessionId) throw new Error('No verification in progress')
-      const data = await apiPost<AuthResponse>('/auth-phone-verify', { sessionId, otp })
-      if (data.success && data.token && data.user) {
-        localStorage.setItem('aidraft_auth_token', data.token)
-        localStorage.setItem('aidraft_current_uid', data.user.uid)
-        set({ user: data.user, loading: false, phoneSessionId: null, phoneInProgress: false })
-        get().syncToCRM(data.user)
-        // CRITICAL FIX: was missing data load after phone login
-        loadUserDataAfterAuth()
-      } else {
-        throw new Error(data.error || 'OTP verification failed')
-      }
-    } catch (err: any) {
-      set({ error: err?.message || 'OTP verification failed', loading: false })
-    }
-  },
-
-  logout: async () => {
-    // CRITICAL: Flush ALL data (app data + profile) BEFORE clearing auth.
-    // This ensures everything created in this session is saved to Firestore
-    // and available on the next login from any device.
-    try {
-      const appStore = await import('@/store/app-store')
-      await appStore.flushSyncToFirestore()
-    } catch (e) {
-      console.error('[logout] Failed to flush app data:', e)
-    }
-
-    // CRITICAL: Also flush profile separately to ensure it's saved
-    try {
-      const profileModule = await import('@/store/profile-store')
-      const { useProfileStore, saveProfileToFirestore } = profileModule
-      const profile = useProfileStore.getState().profile
-      if (profile && (profile.fullName || profile.isComplete)) {
-        await saveProfileToFirestore(profile)
-        console.log('[logout] Profile flushed to Firestore')
-      }
-    } catch (e) {
-      console.error('[logout] Failed to flush profile:', e)
-    }
-
-    // Now safe to sign out and clear tokens
-    try {
-      const { auth } = await import('./firebase')
-      await auth.signOut()
-    } catch { /* ignore */ }
-
-    // Remove only auth-specific keys — do NOT wipe aidraft_app, aidraft_profile, aidraft_clients
-    // Those stores will be rehydrated from Firestore on next login
-    localStorage.removeItem('aidraft_auth_token')
-    localStorage.removeItem('aidraft_current_uid')
-    set({ user: null, phoneSessionId: null, phoneInProgress: false, phoneOTP: null, error: null })
-  },
-
-  syncToCRM: async (user: AuthUser) => {
-    try {
-      const crmData = {
-        uid: user.uid,
-        email: user.email,
-        displayName: user.displayName,
-        phoneNumber: user.phoneNumber,
-        photoURL: user.photoURL,
-        provider: user.provider,
-        createdAt: new Date().toISOString(),
-        source: 'aidraft-bond',
-      }
-      fetch('/api/crm-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(crmData),
-      }).catch(() => {})
-    } catch { /* CRM sync failure should not affect user */ }
-  },
-}))
+export function logout(): void {
+  clearAuth();
+  useAppStore.getState().clearAllData();
+  useProfileStore.getState().clearProfile();
+  useClientsStore.getState().clearClients();
+  useSubscriptionStore.getState().clearSubscription();
+}

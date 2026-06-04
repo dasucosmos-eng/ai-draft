@@ -1,602 +1,265 @@
-'use client'
+'use client';
 
-import { useState, useCallback, useRef, type DragEvent, type ChangeEvent } from 'react'
-import { cn } from '@/lib/utils'
-import {
-  Upload,
-  FileText,
-  Image as ImageIcon,
-  X,
-  Loader2,
-  CheckCircle2,
-  AlertCircle,
-  Eye,
-  File,
-  Sparkles,
-  FileType2,
-} from 'lucide-react'
-import { extractFileContent } from '@/lib/document-parser'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { toast } from 'sonner'
+import { useState, useRef, useCallback } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
+import { apiCall, getAuthToken } from '@/lib/api-client';
+import { Upload, FileText, FileType, Image, X, Loader2, CheckCircle2, Sparkles } from 'lucide-react';
 
-/* ─── Types ─── */
-
-export interface UploadedFile {
-  id: string
-  name: string
-  size: number
-  type: string
-  mimeType: string
-  base64: string
-  extractedText?: string
-  extractedAiData?: Record<string, unknown>
-  status: 'uploading' | 'extracting' | 'extracted' | 'ai_processing' | 'done' | 'error'
-  error?: string
-  previewUrl?: string
+interface UploadResult {
+  text: string;
+  structuredData: any;
+  fileName: string;
 }
 
 interface DocumentUploadProps {
-  onFilesExtracted?: (files: UploadedFile[]) => void
-  onAiDataExtracted?: (data: Record<string, unknown>, file: UploadedFile) => void
-  accept?: string
-  maxFiles?: number
-  compact?: boolean
-  module?: 'execution' | 'civil' | 'criminal' | 'family' | 'general'
-  className?: string
+  module?: 'civil' | 'criminal' | 'family' | 'execution';
+  onExtracted?: (result: UploadResult) => void;
+  compact?: boolean;
 }
-
-/* ─── Constants ─── */
-
-const AI_EXTRACT_API = 'https://us-central1-ai-draft-39e32.cloudfunctions.net/apiAiExtractData'
 
 const ACCEPTED_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
-  'text/plain',
-  'text/csv',
-  'image/png',
   'image/jpeg',
-  'image/jpg',
-  'image/gif',
-  'image/bmp',
+  'image/png',
   'image/webp',
-]
+  'image/tiff',
+  'text/plain',
+];
 
-const MAX_FILE_SIZE = 15 * 1024 * 1024 // 15MB
+const ACCEPTED_EXTENSIONS = '.pdf,.docx,.jpg,.jpeg,.png,.webp,.tiff,.txt';
 
-/* ─── Helpers ─── */
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+function getFileIcon(mimeType: string) {
+  if (mimeType.startsWith('image/')) return <Image className="h-4 w-4 text-blue-400" />;
+  if (mimeType.includes('word') || mimeType.includes('document')) return <FileType className="h-4 w-4 text-blue-500" />;
+  return <FileText className="h-4 w-4 text-red-400" />;
 }
 
-function getFileIcon(mimeType: string): React.ReactNode {
-  if (mimeType.startsWith('image/')) return <ImageIcon className="size-4" />
-  if (mimeType === 'application/pdf') return <FileText className="size-4" />
-  if (mimeType.includes('word') || mimeType.includes('document')) return <FileType2 className="size-4" />
-  return <File className="size-4" />
-}
-
-function getFileTypeColor(mimeType: string): string {
-  if (mimeType === 'application/pdf') return 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
-  if (mimeType.includes('word') || mimeType.includes('document')) return 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
-  if (mimeType.startsWith('image/')) return 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20'
-  return 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20'
-}
-
-/* ─── Component ─── */
-
-export function DocumentUpload({
-  onFilesExtracted,
-  onAiDataExtracted,
-  accept,
-  maxFiles = 10,
-  compact = false,
-  module = 'general',
-  className,
-}: DocumentUploadProps) {
-  const [files, setFiles] = useState<UploadedFile[]>([])
-  const [isDragging, setIsDragging] = useState(false)
-  const [showViewer, setShowViewer] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  /* ─── File Reading ─── */
-
-  const readFileAsBase64 = useCallback((file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.onerror = reject
-      reader.readAsDataURL(file)
-    })
-  }, [])
-
-  /* ─── Text Extraction ─── */
-
-  const extractTextFromFile = useCallback(async (file: File): Promise<string> => {
-    try {
-      const result = await extractFileContent(file)
-      return result.content || ''
-    } catch (err) {
-      console.error('[document-upload] Extraction error:', err)
-      toast.error(`File extraction failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      throw err
-    }
-  }, [])
-
-  /* ─── AI Data Extraction ─── */
-
-  const extractAiData = useCallback(async (text: string, uploadedFile: UploadedFile): Promise<Record<string, unknown>> => {
-    if (!module || module === 'general') return {}
-    try {
-      const response = await fetch(AI_EXTRACT_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          module,
-        }),
-      })
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}))
-        throw new Error(errData.error || `AI extraction failed (${response.status})`)
-      }
-      const data = await response.json()
-      return data.fields || data || {}
-    } catch (err) {
-      console.error('[document-upload] AI extraction error:', err)
-      const errMsg = err instanceof Error ? err.message : 'AI extraction failed'
-      toast.error(`AI extraction failed: ${errMsg}`)
-      return {}
-    }
-  }, [module])
-
-  /* ─── Process File ─── */
+export function DocumentUpload({ module = 'civil', onExtracted, compact = false }: DocumentUploadProps) {
+  const [uploading, setUploading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState<'idle' | 'uploading' | 'extracting' | 'done' | 'error'>('idle');
+  const [fileName, setFileName] = useState('');
+  const [fileSize, setFileSize] = useState('');
+  const [extractedText, setExtractedText] = useState('');
+  const [structuredData, setStructuredData] = useState<any>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(async (file: File) => {
-    if (file.size > MAX_FILE_SIZE) return
-
-    const id = crypto.randomUUID()
-    const base64 = await readFileAsBase64(file)
-    
-    // For images, create preview URL
-    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined
-
-    const uploadedFile: UploadedFile = {
-      id,
-      name: file.name,
-      size: file.size,
-      type: file.name.split('.').pop()?.toLowerCase() || '',
-      mimeType: file.type,
-      base64,
-      status: 'extracting',
-      previewUrl,
+    if (!ACCEPTED_TYPES.includes(file.type) && !ACCEPTED_EXTENSIONS.includes(file.name.substring(file.name.lastIndexOf('.')).toLowerCase())) {
+      toast.error('Unsupported file type. Use PDF, DOCX, images, or text files.');
+      return;
     }
 
-    setFiles((prev) => [...prev, uploadedFile])
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('File too large. Maximum 10MB.');
+      return;
+    }
 
-    // Step 1: Extract text (client-side OCR for images, server for PDF/DOCX)
+    setFileName(file.name);
+    setFileSize((file.size / 1024).toFixed(1) + ' KB');
+    setUploading(true);
+    setExtracting(false);
+    setProgress(0);
+    setStatus('uploading');
+    setExtractedText('');
+    setStructuredData(null);
+
     try {
-      const extractedText = await extractTextFromFile(file)
-      uploadedFile.extractedText = extractedText
-      uploadedFile.status = 'extracted'
+      // Read file as base64
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(',')[1];
+        setProgress(40);
 
-      setFiles((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, extractedText, status: 'extracted' as const } : f))
-      )
+        try {
+          const token = getAuthToken();
+          // Step 1: Extract text from file
+          const extractRes = await apiCall('/ai-extract-file', {
+            fileData: base64,
+            mimeType: file.type,
+            fileName: file.name,
+          }, token || undefined);
 
-      // Step 2: AI data extraction (if module is specified)
-      if (module !== 'general' && extractedText.length > 50) {
-        setFiles((prev) =>
-          prev.map((f) => (f.id === id ? { ...f, status: 'ai_processing' as const } : f))
-        )
+          setProgress(70);
+          const text = extractRes.text || extractRes.content || extractRes.responseText || '';
+          setExtractedText(text);
+          setExtracting(true);
+          setUploading(false);
 
-        const aiData = await extractAiData(extractedText, uploadedFile)
-        if (Object.keys(aiData).length > 0) {
-          uploadedFile.extractedAiData = aiData
-          uploadedFile.status = 'done'
-          setFiles((prev) =>
-            prev.map((f) => (f.id === id ? { ...f, extractedAiData: aiData, status: 'done' as const } : f))
-          )
-          onAiDataExtracted?.(aiData, uploadedFile)
-        } else {
-          uploadedFile.status = 'done'
-          setFiles((prev) =>
-            prev.map((f) => (f.id === id ? { ...f, status: 'done' as const } : f))
-          )
+          // Step 2: Extract structured data
+          let structured = null;
+          try {
+            const dataRes = await apiCall('/ai-extract-data', {
+              text: text.substring(0, 8000),
+              module,
+            }, token || undefined);
+            structured = dataRes.data || dataRes.extracted || dataRes;
+          } catch (e) {
+            console.warn('Data extraction failed, continuing with text only');
+          }
+
+          setStructuredData(structured);
+          setProgress(100);
+          setStatus('done');
+          setExtracting(false);
+
+          if (onExtracted) {
+            onExtracted({
+              text,
+              structuredData: structured,
+              fileName: file.name,
+            });
+          }
+
+          toast.success('Document extracted successfully');
+        } catch (err: any) {
+          setStatus('error');
+          toast.error(err?.message || 'Failed to extract document');
         }
-      } else {
-        uploadedFile.status = 'done'
-        setFiles((prev) =>
-          prev.map((f) => (f.id === id ? { ...f, status: 'done' as const } : f))
-        )
-      }
-
-      // Notify parent
-      setFiles((current) => {
-        onFilesExtracted?.(current)
-        return current
-      })
+      };
+      reader.readAsDataURL(file);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to process file'
-      setFiles((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, status: 'error' as const, error: errorMsg } : f))
-      )
+      setStatus('error');
+      toast.error('Failed to read file');
     }
-  }, [readFileAsBase64, extractTextFromFile, extractAiData, module, onFilesExtracted, onAiDataExtracted])
+  }, [module, onExtracted]);
 
-  /* ─── Handle Files Input ─── */
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+  };
 
-  const handleFiles = useCallback(async (fileList: FileList | File[]) => {
-    const newFiles = Array.from(fileList)
-      .filter((f) => {
-        if (ACCEPTED_TYPES.includes(f.type) || f.name.match(/\.(pdf|docx?|txt|csv|png|jpe?g|gif|bmp|webp)$/i)) return true
-        return false
-      })
-      .slice(0, maxFiles - files.length)
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
-    for (const file of newFiles) {
-      await processFile(file)
-    }
-  }, [files.length, maxFiles, processFile])
+  const reset = () => {
+    setStatus('idle');
+    setFileName('');
+    setFileSize('');
+    setExtractedText('');
+    setStructuredData(null);
+    setProgress(0);
+  };
 
-  /* ─── Drag & Drop ─── */
-
-  const handleDragOver = useCallback((e: DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(true)
-  }, [])
-
-  const handleDragLeave = useCallback((e: DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-  }, [])
-
-  const handleDrop = useCallback((e: DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-    if (e.dataTransfer.files.length > 0) {
-      handleFiles(e.dataTransfer.files)
-    }
-  }, [handleFiles])
-
-  const handleInputChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleFiles(e.target.files)
-    }
-  }, [handleFiles])
-
-  /* ─── Remove File ─── */
-
-  const removeFile = useCallback((id: string) => {
-    setFiles((prev) => {
-      const file = prev.find((f) => f.id === id)
-      if (file?.previewUrl) URL.revokeObjectURL(file.previewUrl)
-      return prev.filter((f) => f.id !== id)
-    })
-  }, [])
-
-  /* ─── View File ─── */
-
-  const viewFile = useCallback((id: string) => {
-    setShowViewer(id)
-  }, [])
-
-  const closeViewer = useCallback(() => {
-    setShowViewer(null)
-  }, [])
-
-  const viewerFile = showViewer ? files.find((f) => f.id === showViewer) : null
-
-  /* ─── RENDER ─── */
-
-  if (compact) {
+  if (compact && status === 'done') {
     return (
-      <>
-        <div className={cn('flex items-center gap-2', className)}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => fileInputRef.current?.click()}
-            className="gap-2 text-xs border-dashed"
-          >
-            <Upload className="size-3.5" />
-            Upload Document
-          </Button>
-          {files.length > 0 && (
-            <Badge variant="secondary" className="text-xs">
-              {files.filter((f) => f.status === 'done').length}/{files.length} processed
-            </Badge>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={accept || '.pdf,.docx,.doc,.txt,.csv,.png,.jpg,.jpeg,.gif,.bmp,.webp'}
-            multiple
-            onChange={handleInputChange}
-            className="hidden"
-          />
+      <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/20">
+        <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium truncate">{fileName}</p>
+          <p className="text-[10px] text-muted-foreground">{fileSize} • Extracted</p>
         </div>
-
-        {/* File list */}
-        {files.length > 0 && (
-          <div className="mt-2 space-y-2">
-            {files.map((file) => (
-              <div
-                key={file.id}
-                className={cn(
-                  'flex items-center gap-2 p-2 rounded-lg border text-xs',
-                  file.status === 'done' && 'border-green-500/20 bg-green-500/5',
-                  file.status === 'error' && 'border-red-500/20 bg-red-500/5',
-                  (file.status === 'extracting' || file.status === 'ai_processing') && 'border-blue-500/20 bg-blue-500/5',
-                  file.status === 'extracted' && 'border-amber-500/20 bg-amber-500/5'
-                )}
-              >
-                {file.status === 'extracting' || file.status === 'ai_processing' ? (
-                  <Loader2 className="size-3.5 animate-spin text-blue-500" />
-                ) : file.status === 'done' ? (
-                  <CheckCircle2 className="size-3.5 text-green-500" />
-                ) : file.status === 'error' ? (
-                  <AlertCircle className="size-3.5 text-red-500" />
-                ) : (
-                  <Loader2 className="size-3.5 animate-spin text-amber-500" />
-                )}
-                <span className="truncate flex-1 text-foreground">{file.name}</span>
-                <span className="text-muted-foreground">{formatFileSize(file.size)}</span>
-                {file.previewUrl && (
-                  <button onClick={() => viewFile(file.id)} className="p-1 hover:bg-muted rounded">
-                    <Eye className="size-3 text-muted-foreground" />
-                  </button>
-                )}
-                <button onClick={() => removeFile(file.id)} className="p-1 hover:bg-muted rounded">
-                  <X className="size-3 text-muted-foreground" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Viewer Modal */}
-        {viewerFile && (
-          <DocumentViewerModal
-            file={viewerFile}
-            onClose={closeViewer}
-          />
-        )}
-      </>
-    )
+        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={reset}>
+          <X className="h-3 w-3" />
+        </Button>
+      </div>
+    );
   }
 
   return (
-    <>
-      <div className={cn('space-y-4', className)}>
-        {/* Upload Zone */}
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          className={cn(
-            'relative rounded-xl border-2 border-dashed p-8 text-center transition-all duration-200 cursor-pointer',
-            isDragging
-              ? 'border-primary bg-primary/5 scale-[1.01]'
-              : 'border-muted-foreground/20 hover:border-primary/40 hover:bg-muted/30',
-            files.length > 0 && 'p-5'
-          )}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={accept || '.pdf,.docx,.doc,.txt,.csv,.png,.jpg,.jpeg,.gif,.bmp,.webp'}
-            multiple
-            onChange={handleInputChange}
-            className="hidden"
-          />
-
-          <div className="flex flex-col items-center gap-3">
-            <div className={cn(
-              'flex size-14 items-center justify-center rounded-2xl transition-colors',
-              isDragging ? 'bg-primary/15' : 'bg-muted'
-            )}>
-              <Upload className={cn('size-6', isDragging ? 'text-primary' : 'text-muted-foreground')} />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">
-                {isDragging ? 'Drop files here' : 'Upload Legal Documents'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                PDF, DOCX, DOC, TXT, CSV, Images — up to 15MB each
-              </p>
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              {['PDF', 'DOCX', 'Images'].map((type) => (
-                <Badge key={type} variant="outline" className="text-[10px] px-2 py-0.5">
-                  {type}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* AI Extraction notice */}
-        {module !== 'general' && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/15">
-            <Sparkles className="size-4 text-primary shrink-0" />
-            <p className="text-xs text-muted-foreground">
-              AI will automatically extract relevant data from your documents and fill in the form fields.
-            </p>
-          </div>
-        )}
-
-        {/* File List */}
-        {files.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                Uploaded Files ({files.length})
-              </p>
-            </div>
-            <div className="space-y-2">
-              {files.map((file) => (
-                <div
-                  key={file.id}
-                  className={cn(
-                    'flex items-center gap-3 p-3 rounded-xl border transition-all',
-                    file.status === 'done' && 'border-green-500/20 bg-green-500/5',
-                    file.status === 'error' && 'border-red-500/20 bg-red-500/5',
-                    (file.status === 'extracting' || file.status === 'ai_processing') && 'border-blue-500/20 bg-blue-500/5',
-                    file.status === 'extracted' && 'border-amber-500/20 bg-amber-500/5'
-                  )}
-                >
-                  {/* File icon */}
-                  <div className={cn('flex size-9 items-center justify-center rounded-lg shrink-0', getFileTypeColor(file.mimeType))}>
-                    {getFileIcon(file.mimeType)}
-                  </div>
-
-                  {/* File info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{file.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs text-muted-foreground">{formatFileSize(file.size)}</span>
-                      {file.extractedText && (
-                        <span className="text-xs text-green-600 dark:text-green-400">
-                          {file.extractedText.length} chars extracted
-                        </span>
-                      )}
-                      {file.status === 'extracting' && (
-                        <span className="text-xs text-blue-500 flex items-center gap-1">
-                          <Loader2 className="size-3 animate-spin" /> Extracting text...
-                        </span>
-                      )}
-                      {file.status === 'ai_processing' && (
-                        <span className="text-xs text-purple-500 flex items-center gap-1">
-                          <Loader2 className="size-3 animate-spin" /> AI analyzing...
-                        </span>
-                      )}
-                      {file.status === 'done' && file.extractedAiData && (
-                        <Badge className="text-[10px] px-1.5 py-0 bg-purple-500/10 text-purple-600 border-purple-500/20">
-                          AI extracted
-                        </Badge>
-                      )}
-                    </div>
-                    {file.error && (
-                      <p className="text-xs text-red-500 mt-1">{file.error}</p>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    {file.previewUrl && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); viewFile(file.id) }}
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                      >
-                        <Eye className="size-4" />
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={(e) => { e.stopPropagation(); removeFile(file.id) }}
-                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                    >
-                      <X className="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Viewer Modal */}
-      {viewerFile && (
-        <DocumentViewerModal
-          file={viewerFile}
-          onClose={closeViewer}
-        />
-      )}
-    </>
-  )
-}
-
-/* ─── Document Viewer Modal ─── */
-
-function DocumentViewerModal({ file, onClose }: { file: UploadedFile; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="space-y-3">
       <div
-        className="relative bg-card border border-border rounded-2xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+        className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed transition-all duration-200 cursor-pointer ${
+          dragOver
+            ? 'border-primary bg-primary/5 scale-[1.01]'
+            : status === 'done'
+            ? 'border-primary/30 bg-primary/5'
+            : 'border-border hover:border-primary/50 hover:bg-muted/30'
+        } ${compact ? 'p-6' : 'p-8'}`}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className={cn('flex size-8 items-center justify-center rounded-lg', getFileTypeColor(file.mimeType))}>
-              {getFileIcon(file.mimeType)}
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">{file.name}</p>
-              <p className="text-xs text-muted-foreground">{formatFileSize(file.size)}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
-              <X className="size-4" />
-            </Button>
-          </div>
-        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_EXTENSIONS}
+          onChange={handleFileSelect}
+          className="hidden"
+        />
 
-        {/* Content */}
-        <div className="flex-1 overflow-auto p-4">
-          {file.previewUrl ? (
-            /* Image preview */
-            <div className="flex items-center justify-center min-h-[300px]">
-              <img
-                src={file.previewUrl}
-                alt={file.name}
-                className="max-w-full max-h-[70vh] object-contain rounded-lg"
-              />
+        {status === 'idle' && (
+          <>
+            <div className={`flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 mb-3 ${compact ? 'h-10 w-10' : ''}`}>
+              <Upload className={`text-primary ${compact ? 'h-5 w-5' : 'h-6 w-6'}`} />
             </div>
-          ) : file.mimeType === 'application/pdf' ? (
-            /* PDF preview */
-            <iframe
-              src={`data:application/pdf;base64,${file.base64.split(',')[1]}`}
-              className="w-full h-[70vh] rounded-lg border"
-              title={file.name}
-            />
-          ) : (
-            /* Text/DOCX preview */
-            <div className="max-h-[70vh] overflow-auto">
-              {file.extractedText ? (
-                <pre className="whitespace-pre-wrap text-sm text-foreground font-[family-name:var(--font-geist-sans)] leading-relaxed p-4 bg-muted/50 rounded-lg">
-                  {file.extractedText}
-                </pre>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <FileText className="size-12 text-muted-foreground mb-4" />
-                  <p className="text-sm text-muted-foreground">
-                    {file.status === 'extracting' || file.status === 'ai_processing'
-                      ? 'Extracting document content...'
-                      : 'No text content available for preview'}
-                  </p>
-                </div>
-              )}
+            <p className={`font-medium ${compact ? 'text-xs' : 'text-sm'}`}>
+              Drop document here or <span className="text-primary underline">browse</span>
+            </p>
+            <p className={`text-muted-foreground mt-1 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+              PDF, DOCX, Images, Text — Max 10MB
+            </p>
+          </>
+        )}
+
+        {(status === 'uploading' || status === 'extracting') && (
+          <>
+            <Loader2 className={`animate-spin text-primary mb-3 ${compact ? 'h-5 w-5' : 'h-6 w-6'}`} />
+            <p className={`font-medium ${compact ? 'text-xs' : 'text-sm'}`}>
+              {status === 'uploading' ? 'Reading document...' : 'Extracting data with AI...'}
+            </p>
+            <Progress value={progress} className="mt-3 h-1.5 w-48" />
+          </>
+        )}
+
+        {status === 'done' && (
+          <>
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 mb-3">
+              <CheckCircle2 className="h-6 w-6 text-primary" />
             </div>
-          )}
-        </div>
+            <p className="text-sm font-medium">{fileName}</p>
+            <p className="text-xs text-muted-foreground mt-1">{fileSize} • Extracted successfully</p>
+            <Button variant="ghost" size="sm" className="mt-2 gap-1.5 text-xs" onClick={(e) => { e.stopPropagation(); reset(); }}>
+              <X className="h-3 w-3" /> Upload Different File
+            </Button>
+          </>
+        )}
+
+        {status === 'error' && (
+          <>
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-destructive/10 mb-3">
+              <X className="h-6 w-6 text-destructive" />
+            </div>
+            <p className="text-sm font-medium text-destructive">Extraction failed</p>
+            <Button variant="ghost" size="sm" className="mt-2 gap-1.5 text-xs" onClick={(e) => { e.stopPropagation(); reset(); }}>
+              Try Again
+            </Button>
+          </>
+        )}
       </div>
+
+      {/* Extracted Data Preview */}
+      {structuredData && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-medium">Extracted Data</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {Object.entries(structuredData).filter(([_, v]) => v !== null && v !== undefined && v !== '').slice(0, 8).map(([key, value]) => (
+                <div key={key} className="text-[10px]">
+                  <span className="text-muted-foreground capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
+                  <span className="ml-1 font-medium">{Array.isArray(value) ? value.join(', ') : String(value).substring(0, 50)}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
-  )
+  );
 }
