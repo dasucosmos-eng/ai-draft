@@ -616,6 +616,16 @@ function getClientsFromLocalStorage(): unknown[] {
   } catch { return [] }
 }
 
+/** Read profile from localStorage directly — avoids circular import */
+function getProfileFromLocalStorage(): unknown {
+  try {
+    const raw = localStorage.getItem('aidraft_profile')
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.state?.profile || parsed?.profile || null
+  } catch { return null }
+}
+
 /** Compute a hash of all syncable data to detect unsynced changes */
 function computeDataHash(): string {
   try {
@@ -623,6 +633,7 @@ function computeDataHash(): string {
     const token = localStorage.getItem('aidraft_auth_token')
     if (!token) return ''
     const clients = getClientsFromLocalStorage()
+    const profile = getProfileFromLocalStorage()
     return JSON.stringify({
       c: state.cases.length,
       d: state.documents.length,
@@ -634,6 +645,8 @@ function computeDataHash(): string {
       dU: state.documents[0]?.updatedAt || '',
       tU: state.tasks[0]?.updatedAt || '',
       clU: clients[0]?.updatedAt || '',
+      pC: profile?.isComplete || false,
+      pN: profile?.fullName || '',
     })
   } catch { return '' }
 }
@@ -668,6 +681,7 @@ export async function syncToFirestore(retryCount = 0): Promise<boolean> {
   try {
     const state = useAppStore.getState()
     const clients = getClientsFromLocalStorage()
+    const profile = getProfileFromLocalStorage()
     const payload = {
       action: 'save',
       cases: state.cases,
@@ -676,11 +690,13 @@ export async function syncToFirestore(retryCount = 0): Promise<boolean> {
       timelineEvents: state.timelineEvents,
       invoices: state.invoices,
       clients,
+      ...(profile ? { profile } : {}),
     }
     console.log('[app-store] Syncing to Firestore:', {
       cases: state.cases.length,
       docs: state.documents.length,
       clients: Array.isArray(clients) ? clients.length : 0,
+      hasProfile: !!profile,
       retry: retryCount,
     })
     const res = await fetch('/api/user-data', {
@@ -758,6 +774,7 @@ export function setupSyncOnUnload(): void {
     if (currentHash !== _lastSyncedHash) {
       const state = useAppStore.getState()
       const clients = getClientsFromLocalStorage()
+      const profile = getProfileFromLocalStorage()
       const payload = JSON.stringify({
         action: 'save',
         cases: state.cases,
@@ -766,12 +783,13 @@ export function setupSyncOnUnload(): void {
         timelineEvents: state.timelineEvents,
         invoices: state.invoices,
         clients,
+        ...(profile ? { profile } : {}),
         _token: token,
       })
       const blob = new Blob([payload], { type: 'application/json' })
       navigator.sendBeacon('/api/user-data', blob)
       console.log('[app-store] beforeunload: synced', {
-        cases: state.cases.length, clients: clients.length
+        cases: state.cases.length, clients: clients.length, hasProfile: !!profile
       })
     }
     if (_syncDebounceTimer) {
@@ -898,7 +916,35 @@ export async function loadFromFirestore(retryCount = 0): Promise<void> {
         documents: d.documents?.length || 0,
         tasks: d.tasks?.length || 0,
         clients: d.clients?.length || 0,
+        hasProfile: !!d.profile,
       })
+
+      // Load profile from the SAME response — avoids a separate API call
+      if (d.profile) {
+        try {
+          const { useProfileStore } = await import('./profile-store')
+          const profileStore = useProfileStore.getState()
+          // Firestore is authoritative — always overwrite local with remote profile
+          if (d.profile.isComplete || d.profile.fullName) {
+            profileStore.setProfile(d.profile)
+            profileStore.setFirestoreStatus('loaded')
+            console.log('[app-store] Loaded profile from Firestore (isComplete:', d.profile.isComplete, ')')
+          }
+        } catch (e) {
+          console.error('[app-store] Failed to load profile from Firestore response:', e)
+        }
+      }
+
+      // Load clients from the SAME response — avoids a separate API call
+      if (d.clients && d.clients.length > 0) {
+        try {
+          const { useClientsStore } = await import('./clients-store')
+          useClientsStore.setState({ clients: d.clients })
+          console.log('[app-store] Loaded clients from Firestore:', d.clients.length)
+        } catch (e) {
+          console.error('[app-store] Failed to load clients from Firestore response:', e)
+        }
+      }
 
       // MIGRATION: Push any local-only data to Firestore
       if (localHasDataToMigrate) {

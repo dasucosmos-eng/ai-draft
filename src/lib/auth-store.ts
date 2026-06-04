@@ -79,15 +79,26 @@ async function loadUserDataAfterAuth(): Promise<void> {
   }, 8000)
 
   try {
-    // Fire all loads in parallel — each handles its own errors
-    await Promise.allSettled([
-      import('@/store/profile-store').then(m => m.loadProfileFromFirestore()),
-      import('@/store/app-store').then(m => m.loadFromFirestore()),
-      import('@/store/clients-store').then(m => m.loadClientsFromFirestore()),
-    ])
+    // CRITICAL: loadFromFirestore is the SINGLE source of truth load.
+    // It fetches ALL user data (cases, documents, tasks, timeline, invoices,
+    // clients, profile) in ONE API call and populates ALL stores.
+    // Profile-store and clients-store loads are now handled INSIDE loadFromFirestore.
+    await import('@/store/app-store').then(m => m.loadFromFirestore())
+
+    // Set profile store status to loaded so UI doesn't show popup incorrectly
+    try {
+      const { useProfileStore } = await import('@/store/profile-store')
+      if (useProfileStore.getState().firestoreStatus !== 'loaded') {
+        useProfileStore.getState().setFirestoreStatus('loaded')
+      }
+    } catch (e) {
+      console.error('[auth-store] Failed to set profile status:', e)
+    }
+  } catch (err) {
+    console.error('[auth-store] CRITICAL: loadFromFirestore failed:', err)
   } finally {
     clearTimeout(safetyTimer)
-    // Ensure dataLoaded is always true after allSettled resolves
+    // Ensure dataLoaded is always true after load completes (success or failure)
     useAppStore.getState().setDataLoaded(true)
   }
 }
@@ -281,15 +292,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
-    // CRITICAL: Flush any pending Firestore sync BEFORE clearing data
-    // This ensures cases/documents created in this session are saved
+    // CRITICAL: Flush ALL data (app data + profile) BEFORE clearing auth.
+    // This ensures everything created in this session is saved to Firestore
+    // and available on the next login from any device.
     try {
       const appStore = await import('@/store/app-store')
       await appStore.flushSyncToFirestore()
-    } catch { /* best effort — don't block logout */ }
+    } catch (e) {
+      console.error('[logout] Failed to flush app data:', e)
+    }
 
+    // CRITICAL: Also flush profile separately to ensure it's saved
     try {
-      // Lazy-import firebase to avoid module-level initialization issues
+      const profileModule = await import('@/store/profile-store')
+      const { useProfileStore, saveProfileToFirestore } = profileModule
+      const profile = useProfileStore.getState().profile
+      if (profile && (profile.fullName || profile.isComplete)) {
+        await saveProfileToFirestore(profile)
+        console.log('[logout] Profile flushed to Firestore')
+      }
+    } catch (e) {
+      console.error('[logout] Failed to flush profile:', e)
+    }
+
+    // Now safe to sign out and clear tokens
+    try {
       const { auth } = await import('./firebase')
       await auth.signOut()
     } catch { /* ignore */ }
