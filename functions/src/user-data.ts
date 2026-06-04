@@ -134,14 +134,26 @@ const handler = async (req: Request, res: Response) => {
 
       case "save": {
         // Smart merge — arrays are merged by ID (upsert), scalars are replaced
-        const { profile, cases, documents, tasks, timelineEvents, invoices, clients } = req.body || {};
+        const { profile, cases, documents, tasks, timelineEvents, invoices, clients, chatMessages } = req.body || {};
         const updateData: Record<string, any> = {};
         if (profile !== undefined) updateData.profile = profile;
-        if (clients !== undefined) updateData.clients = clients;
 
         // Merge arrays by ID — read existing, upsert incoming, return union
         const existingDoc = await userDataRef(uid).get();
         const existing = existingDoc.exists ? existingDoc.data() : {};
+
+        // Merge clients by ID (same logic as other arrays)
+        if (clients !== undefined && Array.isArray(clients)) {
+          const existingClients: any[] = existing.clients || [];
+          const existingClientIds = new Set(existingClients.map((c: any) => c.id));
+          const incomingClientIds = new Set(clients.map((c: any) => c.id));
+          updateData.clients = [
+            ...existingClients.filter((c: any) => !incomingClientIds.has(c.id)),
+            ...clients,
+          ];
+        } else if (clients === undefined && existing.clients) {
+          // Don't overwrite existing clients if none sent
+        }
 
         // ANTI-DATA-LOSS: Only block if ALL fields (including clients, profile, chatMessages)
         // are empty/undefined AND existing Firestore doc has real data.
@@ -154,13 +166,15 @@ const handler = async (req: Request, res: Response) => {
           (Array.isArray(tasks) && tasks.length > 0) ||
           (Array.isArray(timelineEvents) && timelineEvents.length > 0) ||
           (Array.isArray(invoices) && invoices.length > 0) ||
+          (Array.isArray(chatMessages) && chatMessages.length > 0) ||
           (profile && typeof profile === 'object' && Object.keys(profile).length > 0);
 
         if (!hasIncomingData) {
           const existingHasCases = (existing.cases?.length || 0) > 0;
           const existingHasDocs = (existing.documents?.length || 0) > 0;
           const existingHasClients = (existing.clients?.length || 0) > 0;
-          const existingHasData = existingHasCases || existingHasDocs || existingHasClients;
+          const existingHasChat = (existing.chatMessages?.length || 0) > 0;
+          const existingHasData = existingHasCases || existingHasDocs || existingHasClients || existingHasChat;
 
           if (existingHasData) {
             console.warn(
@@ -221,6 +235,15 @@ const handler = async (req: Request, res: Response) => {
           updateData.invoices = [
             ...existingInvoices.filter((i: any) => !incomingIds.has(i.id)),
             ...invoices,
+          ];
+        }
+        if (chatMessages !== undefined && Array.isArray(chatMessages)) {
+          const existingChat: any[] = existing.chatMessages || [];
+          const existingIds = new Set(existingChat.map((m: any) => m.id));
+          const incomingIds = new Set(chatMessages.map((m: any) => m.id));
+          updateData.chatMessages = [
+            ...existingChat.filter((m: any) => !incomingIds.has(m.id)),
+            ...chatMessages,
           ];
         }
 

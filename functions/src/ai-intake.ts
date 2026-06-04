@@ -142,8 +142,13 @@ export const apiAiIntake = https.onRequest(
         }
         if (filesContent && filesContent.length > 0) {
           userPrompt += `Uploaded Document Contents:\n`;
-          for (const file of filesContent) {
-            userPrompt += `\n---\n${typeof file === "string" ? file : JSON.stringify(file)}\n---\n`;
+          if (typeof filesContent === 'string') {
+            // Frontend sends a joined string, not an array
+            userPrompt += `\n---\n${filesContent}\n---\n`;
+          } else {
+            for (const file of filesContent) {
+              userPrompt += `\n---\n${typeof file === "string" ? file : JSON.stringify(file)}\n---\n`;
+            }
           }
         }
 

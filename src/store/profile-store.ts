@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ProfileData } from '@/lib/types';
 import { apiCall, getAuthToken, getCurrentUid } from '@/lib/api-client';
+import { debouncedSave } from './app-store';
 
 interface ProfileState {
   profile: ProfileData;
@@ -29,12 +30,16 @@ const defaultProfile: ProfileData = {
 export const useProfileStore = create<ProfileState>((set, get) => ({
   profile: { ...defaultProfile },
 
-  setProfile: (profile) => set({ profile }),
+  setProfile: (profile) => {
+    set({ profile: profile || { ...defaultProfile } });
+    debouncedSave();
+  },
   updateProfile: (updates) => {
     set((s) => ({
       profile: { ...s.profile, ...updates },
     }));
-    get().saveProfileToFirestore();
+    // Use debounced save — don't fire immediate write on every keystroke
+    debouncedSave();
   },
   loadProfile: (profile) => {
     set({ profile: profile || { ...defaultProfile } });

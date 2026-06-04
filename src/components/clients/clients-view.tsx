@@ -58,7 +58,14 @@ export function ClientsView() {
 
   const clientCases = useMemo(() => {
     if (!selectedClient) return [];
-    return cases.filter((c) => c.clientName === selectedClient.name || selectedClient.caseIds?.includes(c.id));
+    return cases.filter((c) => {
+      // Match by caseIds array (if populated) or by clientName
+      if (selectedClient.caseIds?.includes(c.id)) return true;
+      // Fallback: match by name (handles cases created before caseIds linking)
+      if (c.clientName && selectedClient.name &&
+          c.clientName.toLowerCase() === selectedClient.name.toLowerCase()) return true;
+      return false;
+    });
   }, [cases, selectedClient]);
 
   const clientDocs = useMemo(() => {

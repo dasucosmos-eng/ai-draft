@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -24,6 +24,11 @@ interface DocumentViewerProps {
 export function DocumentViewer({ open, onOpenChange, title, content, onSave }: DocumentViewerProps) {
   const [editing, setEditing] = useState(false);
   const [editedContent, setEditedContent] = useState(content);
+
+  // Sync editedContent when content prop changes (e.g., different document selected)
+  useEffect(() => {
+    setEditedContent(content);
+  }, [content]);
 
   const handleEditToggle = () => {
     if (editing) {

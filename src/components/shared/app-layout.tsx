@@ -48,6 +48,14 @@ const CivilArrestView = lazy(() => import('@/components/tools/civil-arrest-view'
 const AttachmentsIaView = lazy(() => import('@/components/tools/attachments-ia-view').then(m => ({ default: m.AttachmentsIaView })));
 const DecreeJudgementView = lazy(() => import('@/components/tools/decree-judgement-view').then(m => ({ default: m.DecreeJudgementView })));
 
+// Lazy loaded views - General (DraftingView-backed)
+const ExecutionView = lazy(() => import('@/components/tools/execution-view').then(m => ({ default: m.ExecutionView })));
+const CriminalView = lazy(() => import('@/components/tools/criminal-view').then(m => ({ default: m.CriminalView })));
+const CivilOriginalView = lazy(() => import('@/components/tools/civil-original-view').then(m => ({ default: m.CivilOriginalView })));
+const FamilyView = lazy(() => import('@/components/tools/family-view').then(m => ({ default: m.FamilyView })));
+const DefenseBuilderView = lazy(() => import('@/components/tools/defense-builder-view').then(m => ({ default: m.DefenseBuilderView })));
+const ArgumentAnalyzerView = lazy(() => import('@/components/tools/argument-analyzer-view').then(m => ({ default: m.ArgumentAnalyzerView })));
+
 // Lazy loaded views - Criminal Law
 const CriminalAppealsView = lazy(() => import('@/components/tools/criminal-appeals-view').then(m => ({ default: m.CriminalAppealsView })));
 const BailApplicationView = lazy(() => import('@/components/tools/bail-application-view').then(m => ({ default: m.BailApplicationView })));
@@ -129,13 +137,13 @@ function renderView(view: string) {
     // Constitutional
     case 'writ-petition': return <WritPetitionView />;
 
-    // Legacy fallbacks
-    case 'execution': return <ExecutionPetitionView />;
-    case 'civil-original': return <OriginalSuitView />;
-    case 'criminal': return <CriminalAppealsView />;
-    case 'family': return <HmopView />;
-    case 'defense-builder': return <LitigationView />;
-    case 'argument-analyzer': return <LitigationView />;
+    // General (DraftingView-backed)
+    case 'execution': return <ExecutionView />;
+    case 'civil-original': return <CivilOriginalView />;
+    case 'criminal': return <CriminalView />;
+    case 'family': return <FamilyView />;
+    case 'defense-builder': return <DefenseBuilderView />;
+    case 'argument-analyzer': return <ArgumentAnalyzerView />;
 
     default: return <DashboardView />;
   }
