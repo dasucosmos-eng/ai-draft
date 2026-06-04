@@ -228,7 +228,11 @@ export function ClientsView() {
                       <DropdownMenuItem onClick={() => { setSelectedClient(c); setEditClient({ ...c }); setEditMode(true); setActiveTab('info'); setDetailOpen(true); }}>
                         <Edit className="mr-2 h-4 w-4" /> Edit
                       </DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive" onClick={() => { deleteClient(c.id); toast.success('Client deleted'); }}>
+                      <DropdownMenuItem className="text-destructive" onClick={() => {
+                        // BUG #10 FIX: Add confirmation before permanent delete
+                        if (!window.confirm(`Delete client "${c.name}"? This action cannot be undone.`)) return;
+                        deleteClient(c.id); toast.success('Client deleted');
+                      }}>
                         <Trash2 className="mr-2 h-4 w-4" /> Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>

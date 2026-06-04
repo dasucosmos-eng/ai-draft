@@ -96,12 +96,13 @@ function debouncedSave(delay = 1000) {
 }
 
 // Force immediate save (used by logout, page unload)
-function immediateSave() {
+// BUG #8 FIX: Made async so callers can await completion
+async function immediateSave() {
   if (_saveTimer) {
     clearTimeout(_saveTimer);
     _saveTimer = null;
   }
-  flushSaveToFirestore();
+  await flushSaveToFirestore();
 }
 
 // Also expose for other stores

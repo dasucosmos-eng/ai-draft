@@ -28,7 +28,11 @@ import jwt from "jsonwebtoken";
 
 async function verifyUid(req: any): Promise<string | null> {
   const JWT_SECRET = process.env.JWT_SECRET || "aidraft-auth-secret-2026";
-  const token = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+  // BUG #15 FIX: Also check req.body._token (sendBeacon fallback), same as user-data.ts
+  const token =
+    (req.headers.authorization || "").replace("Bearer ", "") ||
+    req.body?.token ||
+    req.body?._token;
   if (!token) return null;
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { uid?: string };

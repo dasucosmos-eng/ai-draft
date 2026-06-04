@@ -79,6 +79,11 @@ export function CasesListView() {
   };
 
   const handleDelete = (id: string) => {
+    // BUG #10 FIX: Add confirmation before permanent delete
+    const caseItem = cases.find(c => c.id === id);
+    if (caseItem && !window.confirm(`Delete case "${caseItem.title}"? This action cannot be undone.`)) {
+      return;
+    }
     deleteCase(id);
     toast.success('Case deleted');
   };

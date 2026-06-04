@@ -51,8 +51,9 @@ function installPersistenceHandlers() {
   });
 
   // BUG #5 FIX: Reload data when tab becomes visible again (multi-tab sync)
+  // BUG #7 FIX: Flush pending saves BEFORE reloading to prevent overwriting unsaved changes
   let _lastReload = 0;
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible') return;
     // Throttle: don't reload more than once every 30 seconds
     const now = Date.now();
@@ -63,7 +64,18 @@ function installPersistenceHandlers() {
     const uid = localStorage.getItem('aidraft_current_uid');
     if (!token || !uid) return;
 
-    console.log('[persistence] Tab visible — reloading data for sync...');
+    console.log('[persistence] Tab visible — flushing unsaved changes then reloading...');
+    try {
+      // BUG #7: Flush any pending local changes to Firestore FIRST
+      const { flushSaveToFirestore } = await import('@/store/app-store');
+      if (useAppStore.getState().dataLoaded) {
+        await flushSaveToFirestore();
+        console.log('[persistence] ✓ Local changes flushed before reload');
+      }
+    } catch (err) {
+      console.warn('[persistence] Flush before reload failed:', err);
+    }
+
     setSaveLock(true);
     loadAllUserData(uid, token).finally(() => {
       setSaveLock(false);
@@ -185,9 +197,10 @@ export async function handleTokenFromUrl(): Promise<boolean> {
 
 export async function logout(): Promise<void> {
   // BUG #4 FIX: Flush pending saves BEFORE clearing data
+  // BUG #8 FIX: Also cancel pending debounce timer to prevent re-scheduling
   try {
-    const { flushSaveToFirestore } = await import('@/store/app-store');
-    await flushSaveToFirestore();
+    const { flushSaveToFirestore, immediateSave } = await import('@/store/app-store');
+    await immediateSave(); // Use immediateSave which clears timer + flushes
     console.log('[logout] Saved pending data before logout');
   } catch (err) {
     console.warn('[logout] Failed to flush before logout:', err);
