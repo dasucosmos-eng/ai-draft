@@ -236,7 +236,7 @@ Extract and return the structured data now.`;
             let data;
             let usedProvider = "none";
             try {
-                data = await (0, sarvam_client_1.callSarvamStructured)(systemPrompt, userPrompt, jsonStructure, 0.2, "sarvam-105b", 6000);
+                data = await (0, sarvam_client_1.callSarvamStructured)(systemPrompt, userPrompt, jsonStructure, 0.2, "sarvam-105b", 4096);
                 usedProvider = "sarvam";
             }
             catch (sarvamErr) {

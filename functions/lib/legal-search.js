@@ -751,7 +751,7 @@ Extract structured data from this case. Respond with valid JSON only.`;
     let model = "none";
     // Try Sarvam 105b first (best for Indian legal text, reasoning model)
     try {
-        result = await (0, sarvam_client_1.callSarvamStructured)(systemPrompt, userPrompt, schemaHint, 0.1, "sarvam-105b", 6000);
+        result = await (0, sarvam_client_1.callSarvamStructured)(systemPrompt, userPrompt, schemaHint, 0.1, "sarvam-105b", 4096);
         model = "sarvam-105b";
     }
     catch (sarvamErr) {

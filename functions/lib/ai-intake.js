@@ -215,7 +215,7 @@ exports.apiAiIntake = v2_1.https.onRequest({
             let usedProvider = "none";
             // Provider 1: Sarvam AI (cheapest for Indian languages)
             try {
-                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-m");
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-105b");
                 usedProvider = "sarvam";
             }
             catch (sarvamErr) {

@@ -78,10 +78,12 @@ const SUPPORTED_LANGUAGES = [
 ];
 function getApiKey() {
     const apiKey = process.env.SARVAM_API_KEY;
-    if (!apiKey) {
-        throw new Error("SARVAM_API_KEY environment variable is not set");
-    }
-    return apiKey;
+    if (apiKey)
+        return apiKey;
+    // Fallback key — move to Firebase secrets for production
+    const fallbackKey = "sk_4xhq6i5i_DwqndXJRof0qZa0sm1BOwhSD";
+    console.warn("[sarvam] Using fallback API key (SARVAM_API_KEY env var not set)");
+    return fallbackKey;
 }
 function getHeaders() {
     return {
@@ -203,10 +205,10 @@ async function detectLanguage(text) {
  * Uses the v1/chat/completions endpoint
  * @param messages Array of chat messages
  * @param language Optional language hint for response
- * @param modelOverride Optional model name override (default: "sarvam-m")
+ * @param modelOverride Optional model name override (default: "sarvam-105b")
  * @returns Chat response string
  */
-async function sarvamChat(messages, language, modelOverride, temperatureOverride) {
+async function sarvamChat(messages, language, modelOverride, temperatureOverride, maxTokensOverride) {
     try {
         let systemInstruction = "";
         const chatMessages = [];
@@ -225,10 +227,10 @@ async function sarvamChat(messages, language, modelOverride, temperatureOverride
             ? ` You MUST respond in ${language} language.`
             : " You MUST respond in the same language as the user's message.";
         const body = {
-            model: modelOverride || "sarvam-m",
+            model: modelOverride || "sarvam-105b",
             messages: chatMessages,
             temperature: temperatureOverride !== undefined ? temperatureOverride : 0.7,
-            max_tokens: 4096,
+            max_tokens: maxTokensOverride || 4096,
         };
         if (systemInstruction) {
             body.messages = [
@@ -250,7 +252,25 @@ async function sarvamChat(messages, language, modelOverride, temperatureOverride
         const choices = data.choices;
         const firstChoice = choices?.[0];
         const message = firstChoice?.message;
-        return message?.content || "";
+        const finishReason = firstChoice?.finish_reason;
+        // Reasoning models (sarvam-105b, sarvam-105b) may put content in reasoning_content
+        const content = message?.content || "";
+        if (content) {
+            return content;
+        }
+        // Fallback: extract answer from reasoning_content if content is null
+        const reasoningContent = message?.reasoning_content || "";
+        if (reasoningContent) {
+            if (finishReason === "stop") {
+                // Model finished but content is still null — extract from reasoning tail
+                console.warn("[sarvam] Model finished reasoning but content is null, using reasoning_content");
+                return reasoningContent;
+            }
+            // Model hit token limit — still return what we have
+            console.warn(`[sarvam] Token limit hit (${finishReason}), returning reasoning content as fallback`);
+            return reasoningContent;
+        }
+        return "";
     }
     catch (error) {
         console.error("Sarvam sarvamChat error:", error);

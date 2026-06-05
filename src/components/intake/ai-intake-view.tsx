@@ -369,57 +369,76 @@ export function AiIntakeView() {
         setStage('drafting');
         setProgressLabel(`Generating ${data.suggestedDocuments.length} documents...`);
         
-        // Draft documents SEQUENTIALLY with 3s delay between each
-        // to avoid hitting API rate limits
+        // Draft documents SEQUENTIALLY with 10s delay between each
+        // to avoid hitting API rate limits across all providers
         const completedDrafts: GeneratedDraft[] = [];
         for (let idx = 0; idx < data.suggestedDocuments.length; idx++) {
           // Check if drafting was cancelled
           if (abortController.signal.aborted) break;
           const doc = data.suggestedDocuments[idx];
           if (idx > 0) {
-            // Wait 3 seconds between documents to avoid rate limits
-            await new Promise(r => setTimeout(r, 3000));
+            // Wait 10 seconds between documents to avoid rate limits
+            await new Promise(r => setTimeout(r, 10000));
           }
-          try {
-            setProgress(85 + Math.floor(((idx + 1) / data.suggestedDocuments.length) * 15));
-            setProgressLabel(`Drafting: ${doc.name} (${idx + 1}/${data.suggestedDocuments.length})`);
-            
-            // Route to the correct API based on document type
-            let endpoint = '/ai-draft';
-            let body: any = {
-              documentType: doc.name,
-              caseType: data.caseType,
-              details: buildDetailsString(data, caseId, clientId),
-              extractedText: fileContent || '',
-            };
 
-            // NOTE: Do NOT route to specialized endpoints (ai-criminal, ai-civil, ai-family)
-            // here. Those require specific structured input (bailType, matterFacts, etc.)
-            // that the intake auto-draft doesn't provide. They don't support a generic
-            // 'generateDocument' task. Use /ai-draft which accepts generic documentType + details.
+          let draftSuccess = false;
+          let lastError: any = null;
 
-            const draftRes = await apiCall(endpoint, body);
-            // Handle response format: { success, data: { content } } or { content }
-            const content = draftRes.data?.content || draftRes.content || draftRes.responseText || draftRes.draft || '';
-            if (!content) {
-              throw new Error('Empty response from drafting endpoint');
+          // Retry up to 2 times with increasing delay (10s, 20s)
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              setProgress(85 + Math.floor(((idx + 1) / data.suggestedDocuments.length) * 15));
+              setProgressLabel(`Drafting: ${doc.name} (${idx + 1}/${data.suggestedDocuments.length})${attempt > 0 ? ` [retry ${attempt}]` : ''}`);
+              
+              // Route to the correct API based on document type
+              let endpoint = '/ai-draft';
+              let body: any = {
+                documentType: doc.name,
+                caseType: data.caseType,
+                details: buildDetailsString(data, caseId, clientId),
+                extractedText: fileContent || '',
+              };
+
+              // NOTE: Do NOT route to specialized endpoints (ai-criminal, ai-civil, ai-family)
+              // here. Those require specific structured input (bailType, matterFacts, etc.)
+              // that the intake auto-draft doesn't provide. They don't support a generic
+              // 'generateDocument' task. Use /ai-draft which accepts generic documentType + details.
+
+              const draftRes = await apiCall(endpoint, body);
+              // Handle response format: { success, data: { content } } or { content }
+              const content = draftRes.data?.content || draftRes.content || draftRes.responseText || draftRes.draft || '';
+              if (!content) {
+                throw new Error('Empty response from drafting endpoint');
+              }
+
+              // Save the generated document to the case
+              addDocument({
+                id: uuidv4(),
+                name: `${doc.name} - ${new Date().toLocaleDateString('en-IN')}`,
+                type: doc.type || 'draft',
+                category: 'generated',
+                content,
+                caseId,
+                createdAt: new Date().toISOString(),
+              });
+
+              completedDrafts.push({ name: doc.name, type: doc.type || 'draft', content, status: 'done' as const });
+              draftSuccess = true;
+              break;
+            } catch (err) {
+              lastError = err;
+              console.error(`Failed to draft ${doc.name} (attempt ${attempt + 1}):`, err);
+              if (attempt < 1) {
+                // Wait 15 seconds before retry to let rate limits reset
+                console.log(`[intake] Waiting 15s before retry for ${doc.name}...`);
+                await new Promise(r => setTimeout(r, 15000));
+              }
             }
+          }
 
-            // Save the generated document to the case
-            addDocument({
-              id: uuidv4(),
-              name: `${doc.name} - ${new Date().toLocaleDateString('en-IN')}`,
-              type: doc.type || 'draft',
-              category: 'generated',
-              content,
-              caseId,
-              createdAt: new Date().toISOString(),
-            });
-
-            completedDrafts.push({ name: doc.name, type: doc.type || 'draft', content, status: 'done' as const });
-          } catch (err) {
-            console.error(`Failed to draft ${doc.name}:`, err);
-            completedDrafts.push({ name: doc.name, type: doc.type || 'draft', content: `Failed to generate: ${err}`, status: 'error' as const });
+          if (!draftSuccess) {
+            console.error(`Failed to draft ${doc.name} after 2 attempts:`, lastError);
+            completedDrafts.push({ name: doc.name, type: doc.type || 'draft', content: `Failed to generate: ${lastError}`, status: 'error' as const });
           }
         }
         setDrafts([...completedDrafts]);

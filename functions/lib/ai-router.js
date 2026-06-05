@@ -122,12 +122,12 @@ async function routeChat(messages, options) {
     const allText = messages.map((m) => m.content).join(" ");
     const isIndian = containsIndianLanguage(allText) || options?.language;
     if (isIndian) {
-        logModelSelection("chat", "sarvam-m", "Indian language detected — using free Sarvam-M");
+        logModelSelection("chat", "sarvam-105b", "Indian language detected — using Sarvam-30B");
         try {
             const response = await (0, sarvam_1.sarvamChat)(messages, options?.language);
             return {
                 response,
-                model: "sarvam-m",
+                model: "sarvam-105b",
                 cost: 0, // Free model
             };
         }
@@ -519,7 +519,7 @@ async function routeTranslation(text, targetLang) {
         "marathi", "urdu", "gujarati", "punjabi", "odia", "assamese",
     ];
     if (indianTargetLangs.includes(targetLang.toLowerCase())) {
-        logModelSelection("translation", "sarvam-m", `Translating to ${targetLang} (Sarvam-M, free)`);
+        logModelSelection("translation", "sarvam-105b", `Translating to ${targetLang} (Sarvam-30B)`);
         try {
             const { translate } = await Promise.resolve().then(() => __importStar(require("./sarvam")));
             // Detect source language from content
@@ -537,8 +537,8 @@ async function routeTranslation(text, targetLang) {
             const response = await translate(text, sourceLang, targetLang);
             return {
                 response,
-                model: "sarvam-m",
-                cost: 0, // Sarvam-M is free
+                model: "sarvam-105b",
+                cost: 0, // Sarvam-30B is free
             };
         }
         catch (sarvamError) {

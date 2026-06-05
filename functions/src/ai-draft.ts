@@ -82,14 +82,16 @@ async function callAIWithRetry(
       } catch (err: any) {
         const errMsg = err?.message || String(err);
         const isRetryable = errMsg.includes("403") || errMsg.includes("429") ||
-                           errMsg.includes("rate_limit") || errMsg.includes("quota") ||
-                           errMsg.includes("timeout") || errMsg.includes("ECONNRESET");
+                           errMsg.includes("500") || errMsg.includes("502") ||
+                           errMsg.includes("503") || errMsg.includes("rate_limit") ||
+                           errMsg.includes("quota") || errMsg.includes("timeout") ||
+                           errMsg.includes("ECONNRESET") || errMsg.includes("overloaded");
 
         console.error(`[ai-draft] ${provider.name} failed (attempt ${attempt}): [${err?.constructor?.name}] ${errMsg.substring(0, 300)}`);
 
         if (isRetryable && attempt < maxRetries) {
-          // Exponential backoff: 2s, 4s
-          const delay = Math.pow(2, attempt) * 1000;
+          // Exponential backoff: 3s, 6s
+          const delay = Math.pow(3, attempt) * 1000;
           console.log(`[ai-draft] Retrying ${provider.name} in ${delay}ms...`);
           await new Promise(r => setTimeout(r, delay));
           continue;

@@ -51,7 +51,7 @@ function parseJsonFromText(text) {
  */
 async function callAIWithFallback(systemPrompt, userPrompt, jsonStructureHint, options) {
     const temperature = options?.temperature ?? 0.3;
-    const sarvamModel = options?.sarvamModel ?? "sarvam-30b";
+    const sarvamModel = options?.sarvamModel ?? "sarvam-105b";
     const maxTokens = options?.maxTokens ?? 4000;
     const functionName = options?.function_name ?? "unknown";
     const maxRetries = 2;

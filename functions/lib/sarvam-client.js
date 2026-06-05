@@ -13,12 +13,12 @@ Object.defineProperty(exports, "translate", { enumerable: true, get: function ()
 Object.defineProperty(exports, "detectLanguage", { enumerable: true, get: function () { return sarvam_1.detectLanguage; } });
 console.log("[sarvam-client] INIT — using direct Sarvam AI API");
 // ─── Core: structured JSON response ──────────────────────────
-async function callSarvamStructured(systemPrompt, userPrompt, jsonStructureHint, temperature = 0.3, model = "sarvam-m", maxTokens = 4096) {
+async function callSarvamStructured(systemPrompt, userPrompt, jsonStructureHint, temperature = 0.3, model = "sarvam-105b", maxTokens = 4096) {
     const fullPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON matching this structure:\n${jsonStructureHint}`;
     const response = await (0, sarvam_1.sarvamChat)([
         { role: "system", content: fullPrompt },
         { role: "user", content: userPrompt },
-    ], undefined, model, temperature);
+    ], undefined, model, temperature, maxTokens);
     try {
         const cleaned = response.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
         return JSON.parse(cleaned);
@@ -29,13 +29,13 @@ async function callSarvamStructured(systemPrompt, userPrompt, jsonStructureHint,
     }
 }
 // ─── Core: free-form text response ───────────────────────────
-async function callSarvamText(systemPrompt, userPrompt, temperature = 0.6, model = "sarvam-m") {
+async function callSarvamText(systemPrompt, userPrompt, temperature = 0.6, model = "sarvam-105b") {
     return (0, sarvam_1.sarvamChat)([
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
     ], undefined, model, temperature);
 }
 // ─── Core: multi-turn chat ──────────────────────────────────
-async function callSarvamChat(systemPrompt, messages, temperature = 0.6, model = "sarvam-m") {
+async function callSarvamChat(systemPrompt, messages, temperature = 0.6, model = "sarvam-105b") {
     return (0, sarvam_1.sarvamChat)([{ role: "system", content: systemPrompt }, ...messages], undefined, model);
 }

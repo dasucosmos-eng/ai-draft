@@ -670,7 +670,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                     const userPrompt = buildMVOPPrompt(req.body);
                     let data;
                     try {
-                        data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, MVOP_JSON_STRUCTURE, 0.3, "sarvam-105b", 6000);
+                        data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, MVOP_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
                     }
                     catch (sarvamErr) {
                         console.error("[ai-family] Sarvam failed for generateMVOP, falling back to Groq:", sarvamErr?.message);

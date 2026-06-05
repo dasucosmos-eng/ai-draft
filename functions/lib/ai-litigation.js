@@ -385,7 +385,7 @@ exports.apiAiLitigation = v2_1.https.onRequest({
             const systemPrompt = TOOL_PROMPTS[toolType];
             let responseText;
             try {
-                responseText = await (0, sarvam_client_1.callSarvamText)(systemPrompt, userMessage, 0.5, "sarvam-30b");
+                responseText = await (0, sarvam_client_1.callSarvamText)(systemPrompt, userMessage, 0.5, "sarvam-105b");
             }
             catch (sarvamErr) {
                 console.error("[ai-litigation] Sarvam failed, falling back to Groq:", sarvamErr?.message);

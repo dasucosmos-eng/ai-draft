@@ -506,7 +506,7 @@ exports.apiAiCivil = v2_1.https.onRequest({
                     const userPrompt = buildWSPrompt(plaintText, defendantName, defendantCounsel, additionalPleas, setOffCounterClaim);
                     let data;
                     try {
-                        data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3, "sarvam-105b", 6000);
+                        data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
                     }
                     catch (sarvamErr) {
                         console.error("[ai-civil] Sarvam failed for generateWS, falling back to Groq:", sarvamErr?.message);
@@ -591,7 +591,7 @@ exports.apiAiCivil = v2_1.https.onRequest({
                     const userPrompt = buildWrittenArgumentsPrompt(issues, evidence || [], pleadings || {}, caseType || "Civil Suit", courtFormat);
                     let data;
                     try {
-                        data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3, "sarvam-105b", 6000);
+                        data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
                     }
                     catch (sarvamErr) {
                         console.error("[ai-civil] Sarvam failed for generateWrittenArguments, falling back to Groq:", sarvamErr?.message);

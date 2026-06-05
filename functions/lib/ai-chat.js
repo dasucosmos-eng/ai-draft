@@ -109,7 +109,7 @@ exports.apiAiChat = v2_1.https.onRequest({
             const messages = [...history, { role: "user", content: message }];
             let responseText;
             try {
-                responseText = await (0, sarvam_client_1.callSarvamChat)(sysPrompt, messages, 0.6, "sarvam-30b");
+                responseText = await (0, sarvam_client_1.callSarvamChat)(sysPrompt, messages, 0.6, "sarvam-105b");
             }
             catch (sarvamErr) {
                 console.error("[ai-chat] Sarvam failed, falling back to Groq:", sarvamErr?.message);
@@ -124,7 +124,7 @@ exports.apiAiChat = v2_1.https.onRequest({
             // Generate suggestions separately with triple fallback
             let suggestions;
             try {
-                suggestions = await (0, sarvam_client_1.callSarvamStructured)(`You are a legal AI assistant. Given the user's question and your response, suggest 3 brief follow-up questions (under 15 words each) that a lawyer might ask next. Return them in order of relevance.`, `User asked: "${message}"\nYour response was: "${responseText.substring(0, 500)}"`, SUGGESTIONS_JSON, 0.3, "sarvam-30b");
+                suggestions = await (0, sarvam_client_1.callSarvamStructured)(`You are a legal AI assistant. Given the user's question and your response, suggest 3 brief follow-up questions (under 15 words each) that a lawyer might ask next. Return them in order of relevance.`, `User asked: "${message}"\nYour response was: "${responseText.substring(0, 500)}"`, SUGGESTIONS_JSON, 0.3, "sarvam-105b");
             }
             catch (sarvamErr) {
                 console.error("[ai-chat] Sarvam failed for suggestions, falling back to Groq:", sarvamErr?.message);
