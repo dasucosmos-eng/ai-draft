@@ -102,7 +102,10 @@ async function callAIWithRetry(
 export const apiAiDraft = https.onRequest(
   {
     timeoutSeconds: 180,
-    region: "us-central1", secrets: aiFunctionSecrets,
+    region: "us-central1",
+    secrets: aiFunctionSecrets,
+    memory: "512MiB",
+    minInstances: 1,
   },
   async (req, res) => {
     return corsHandler(req, res, async () => {

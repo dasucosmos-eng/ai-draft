@@ -64,7 +64,10 @@ async function extractImageTextFallback(_base64Data: string, fileName: string): 
 export const apiExtractFile = https.onRequest(
   {
     timeoutSeconds: 120,
-    region: "us-central1", secrets: aiFunctionSecrets,
+    region: "us-central1",
+    secrets: aiFunctionSecrets,
+    memory: "256MiB",
+    minInstances: 1,
   },
   async (req, res) => {
     return corsHandler(req, res, async () => {

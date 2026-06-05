@@ -91,7 +91,10 @@ async function extractImageTextFallback(_base64Data, fileName) {
 // ─── Main handler ───────────────────────────────────────────────
 exports.apiExtractFile = v2_1.https.onRequest({
     timeoutSeconds: 120,
-    region: "us-central1", secrets: secrets_1.aiFunctionSecrets,
+    region: "us-central1",
+    secrets: secrets_1.aiFunctionSecrets,
+    memory: "256MiB",
+    minInstances: 1,
 }, async (req, res) => {
     return corsHandler(req, res, async () => {
         if (req.method !== "POST") {

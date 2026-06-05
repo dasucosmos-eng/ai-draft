@@ -38,7 +38,7 @@ exports.apiAiDraft = void 0;
 const secrets_1 = require("./secrets");
 const admin = __importStar(require("firebase-admin"));
 // ai-draft — Firebase Cloud Function
-// Generates legal documents using Sarvam → Groq → Gemini fallback
+// Generates legal documents using Sarvam (primary) → Groq → Gemini fallback
 // Returns: { success, data: { title, content, keyPoints, warnings } }
 const v2_1 = require("firebase-functions/v2");
 const cors_1 = require("./cors");
@@ -76,8 +76,9 @@ async function callAIWithRetry(systemPrompt, userPrompt, maxRetries = 2) {
     const { callSarvamStructured } = await Promise.resolve().then(() => __importStar(require("./sarvam-client")));
     const { callGroqStructured } = await Promise.resolve().then(() => __importStar(require("./groq-client")));
     const { callGeminiText } = await Promise.resolve().then(() => __importStar(require("./gemini-client")));
+    // Provider order: Sarvam first (free, Indian AI), then Groq, then Gemini
     const providers = [
-        { name: "Sarvam", fn: () => callSarvamStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-105b") },
+        { name: "Sarvam", fn: () => callSarvamStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-m") },
         { name: "Groq", fn: () => callGroqStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3) },
         { name: "Gemini", fn: async () => {
                 const geminiPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON:\n${JSON_STRUCTURE}`;
@@ -105,7 +106,7 @@ async function callAIWithRetry(systemPrompt, userPrompt, maxRetries = 2) {
                 const isRetryable = errMsg.includes("403") || errMsg.includes("429") ||
                     errMsg.includes("rate_limit") || errMsg.includes("quota") ||
                     errMsg.includes("timeout") || errMsg.includes("ECONNRESET");
-                console.error(`[ai-draft] ${provider.name} failed (attempt ${attempt}): ${errMsg.substring(0, 200)}`);
+                console.error(`[ai-draft] ${provider.name} failed (attempt ${attempt}): [${err?.constructor?.name}] ${errMsg.substring(0, 300)}`);
                 if (isRetryable && attempt < maxRetries) {
                     // Exponential backoff: 2s, 4s
                     const delay = Math.pow(2, attempt) * 1000;
@@ -121,7 +122,10 @@ async function callAIWithRetry(systemPrompt, userPrompt, maxRetries = 2) {
 }
 exports.apiAiDraft = v2_1.https.onRequest({
     timeoutSeconds: 180,
-    region: "us-central1", secrets: secrets_1.aiFunctionSecrets,
+    region: "us-central1",
+    secrets: secrets_1.aiFunctionSecrets,
+    memory: "512MiB",
+    minInstances: 1,
 }, async (req, res) => {
     return corsHandler(req, res, async () => {
         if (req.method !== "POST") {

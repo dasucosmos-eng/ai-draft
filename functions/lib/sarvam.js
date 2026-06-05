@@ -200,12 +200,13 @@ async function detectLanguage(text) {
 }
 /**
  * Multilingual chat using Sarvam AI
- * Uses the v1/chat/completions endpoint with model "sarvam-m"
+ * Uses the v1/chat/completions endpoint
  * @param messages Array of chat messages
  * @param language Optional language hint for response
+ * @param modelOverride Optional model name override (default: "sarvam-m")
  * @returns Chat response string
  */
-async function sarvamChat(messages, language) {
+async function sarvamChat(messages, language, modelOverride, temperatureOverride) {
     try {
         let systemInstruction = "";
         const chatMessages = [];
@@ -224,10 +225,10 @@ async function sarvamChat(messages, language) {
             ? ` You MUST respond in ${language} language.`
             : " You MUST respond in the same language as the user's message.";
         const body = {
-            model: "sarvam-m",
+            model: modelOverride || "sarvam-m",
             messages: chatMessages,
-            temperature: 0.7,
-            max_tokens: 2048,
+            temperature: temperatureOverride !== undefined ? temperatureOverride : 0.7,
+            max_tokens: 4096,
         };
         if (systemInstruction) {
             body.messages = [

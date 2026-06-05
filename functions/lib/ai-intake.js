@@ -148,7 +148,10 @@ function parseJsonFromText(text) {
 }
 exports.apiAiIntake = v2_1.https.onRequest({
     timeoutSeconds: 180,
-    region: "us-central1", secrets: secrets_1.aiFunctionSecrets,
+    region: "us-central1",
+    secrets: secrets_1.aiFunctionSecrets,
+    memory: "512MiB",
+    minInstances: 1,
 }, async (req, res) => {
     return corsHandler(req, res, async () => {
         if (req.method !== "POST") {
@@ -212,7 +215,7 @@ exports.apiAiIntake = v2_1.https.onRequest({
             let usedProvider = "none";
             // Provider 1: Sarvam AI (cheapest for Indian languages)
             try {
-                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-30b");
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-m");
                 usedProvider = "sarvam";
             }
             catch (sarvamErr) {
