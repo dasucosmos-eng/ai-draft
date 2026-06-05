@@ -190,7 +190,7 @@ export const apiAiIntake = https.onRequest(
             userPrompt,
             JSON_STRUCTURE,
             0.3,
-            "sarvam-m"
+            "sarvam-30b"
           );
           usedProvider = "sarvam";
         } catch (sarvamErr) {
