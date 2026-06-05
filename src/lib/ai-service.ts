@@ -28,8 +28,8 @@ export async function aiExtractFile(fileData: string, fileName: string, mimeType
   return apiCall('/ai-extract-file', { fileData, fileName, mimeType }, getAuthToken() || undefined);
 }
 
-export async function aiExtractData(text: string, extractionType: string) {
-  return apiCall('/ai-extract-data', { text, extractionType }, getAuthToken() || undefined);
+export async function aiExtractData(text: string, module: string) {
+  return apiCall('/ai-extract-data', { text, module }, getAuthToken() || undefined);
 }
 
 export async function aiCivil(input: any) {

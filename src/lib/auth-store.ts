@@ -29,6 +29,13 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope('email');
 googleProvider.addScope('profile');
 
+/* ─── Guard to prevent double-loading of user data ─── */
+let _dataLoadedForUid: string | null = null;
+
+function resetDataLoadedFlag(): void {
+  _dataLoadedForUid = null;
+}
+
 /* ─── Cache uid to detect account switches ─── */
 
 function getCachedUid(): string | null {
@@ -92,9 +99,12 @@ async function processFirebaseUser(user: User): Promise<{ uid: string; token: st
   setCurrentUid(uid);
   setCachedUid(uid);
 
-  // Load user data
-  await loadAllUserData(uid);
-  await populateStores();
+  // Load user data (guard prevents double-loading)
+  if (_dataLoadedForUid !== uid) {
+    _dataLoadedForUid = uid;
+    await loadAllUserData(uid);
+    await populateStores();
+  }
 
   return { uid, token };
 }
@@ -135,9 +145,25 @@ export function onAuthStateChange(callback: (user: User | null) => void): () => 
     _authListenerUnsubscribe();
   }
 
-  _authListenerUnsubscribe = onAuthStateChanged(auth, (user) => {
+  _authListenerUnsubscribe = onAuthStateChanged(auth, async (user) => {
     if (user) {
       startTokenRefresh(user);
+      // CRITICAL: Load user data when session is restored (page refresh).
+      // Without this, data is lost after refresh because verifyAndRestore()
+      // fails when auth.currentUser is null during Firebase SDK init.
+      if (_dataLoadedForUid !== user.uid) {
+        _dataLoadedForUid = user.uid;
+        try {
+          const token = await user.getIdToken();
+          setAuthToken(token);
+          setCurrentUid(user.uid);
+          setCachedUid(user.uid);
+          await loadAllUserData(user.uid);
+          await populateStores();
+        } catch (err) {
+          console.warn('[auth] Failed to load data on auth state restore:', err);
+        }
+      }
     } else {
       stopTokenRefresh();
     }
@@ -164,8 +190,12 @@ export async function verifyAndRestore(): Promise<boolean> {
     setCurrentUid(user.uid);
     setCachedUid(user.uid);
 
-    await loadAllUserData(user.uid);
-    await populateStores();
+    // Guard prevents double-loading (onAuthStateChange may also fire)
+    if (_dataLoadedForUid !== user.uid) {
+      _dataLoadedForUid = user.uid;
+      await loadAllUserData(user.uid);
+      await populateStores();
+    }
     startTokenRefresh(user);
     return true;
   } catch {
@@ -362,6 +392,7 @@ export async function logout(): Promise<void> {
 
   clearAuth();
   clearCachedUid();
+  resetDataLoadedFlag();
 
   // Clear compatibility stores
   try {

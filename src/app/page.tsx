@@ -30,19 +30,21 @@ export default function HomePage() {
       const valid = await verifyAndRestore();
       if (valid && mounted) {
         setAuthState('auth');
-        setTimeout(() => setDataReady(true), 100);
+        setDataReady(true);
         return;
       }
 
-      // If no existing session, listen for auth state changes
-      // (e.g., user signs in via popup/redirect)
+      // If no existing session (or auth.currentUser was null during SDK init),
+      // listen for auth state changes. onAuthStateChange now handles data loading
+      // when the session is restored from Firebase Auth persistence.
       if (!mounted) return;
       unsubscribe = onAuthStateChange((user: User | null) => {
         if (!mounted) return;
 
         if (user) {
+          // Data was already loaded inside onAuthStateChange (auth-store.ts)
           setAuthState('auth');
-          setTimeout(() => setDataReady(true), 100);
+          setDataReady(true);
         } else {
           setAuthState('unauth');
         }
