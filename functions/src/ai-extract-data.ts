@@ -232,7 +232,7 @@ Extract and return the structured data now.`;
             jsonStructure,
             0.2,
             "sarvam-105b",
-            6000
+            4096
           );
           usedProvider = "sarvam";
         } catch (sarvamErr) {

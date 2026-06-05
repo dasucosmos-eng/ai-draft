@@ -15,13 +15,13 @@ export async function callSarvamStructured<T>(
   jsonStructureHint: string,
   temperature: number = 0.3,
   model: string = "sarvam-30b",
-  maxTokens: number = 8192
+  maxTokens: number = 4096
 ): Promise<T> {
   const fullPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON matching this structure:\n${jsonStructureHint}`;
   const response = await sarvamChat([
     { role: "system", content: fullPrompt },
     { role: "user", content: userPrompt },
-  ], undefined, model, temperature);
+  ], undefined, model, temperature, maxTokens);
 
   try {
     const cleaned = response.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();

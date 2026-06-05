@@ -241,7 +241,8 @@ export async function sarvamChat(
   messages: SarvamMessage[],
   language?: string,
   modelOverride?: string,
-  temperatureOverride?: number
+  temperatureOverride?: number,
+  maxTokensOverride?: number
 ): Promise<string> {
   try {
     let systemInstruction = "";
@@ -266,7 +267,7 @@ export async function sarvamChat(
       model: modelOverride || "sarvam-30b",
       messages: chatMessages,
       temperature: temperatureOverride !== undefined ? temperatureOverride : 0.7,
-      max_tokens: 8192,
+      max_tokens: maxTokensOverride || 4096,
     };
 
     if (systemInstruction) {

@@ -935,7 +935,7 @@ Extract structured data from this case. Respond with valid JSON only.`;
 
   // Try Sarvam 105b first (best for Indian legal text, reasoning model)
   try {
-    result = await callSarvamStructured<any>(systemPrompt, userPrompt, schemaHint, 0.1, "sarvam-105b", 6000);
+    result = await callSarvamStructured<any>(systemPrompt, userPrompt, schemaHint, 0.1, "sarvam-105b", 4096);
     model = "sarvam-105b";
   } catch (sarvamErr) {
     console.error(`[extractCase] Sarvam failed for "${ikResult.title.substring(0, 40)}": ${sarvamErr?.message}`);
