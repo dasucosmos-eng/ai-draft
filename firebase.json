@@ -127,6 +127,16 @@
         "region": "us-central1"
       },
       {
+        "source": "/api/username-check",
+        "function": "apiUsernameCheck",
+        "region": "us-central1"
+      },
+      {
+        "source": "/api/username-claim",
+        "function": "apiUsernameClaim",
+        "region": "us-central1"
+      },
+      {
         "source": "/api/file-upload-url",
         "function": "fileUploadUrl",
         "region": "us-central1"

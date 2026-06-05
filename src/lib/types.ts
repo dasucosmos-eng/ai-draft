@@ -69,6 +69,7 @@ export interface Client {
 
 export interface ProfileData {
   fullName: string;
+  username: string;
   email: string;
   phone: string;
   barCouncilNumber: string;

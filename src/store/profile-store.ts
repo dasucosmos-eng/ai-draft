@@ -14,6 +14,7 @@ import { getProfile } from '@/lib/db';
 
 const defaultProfile: ProfileData = {
   fullName: '',
+  username: '',
   email: '',
   phone: '',
   barCouncilNumber: '',

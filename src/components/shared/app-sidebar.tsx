@@ -12,7 +12,7 @@ import {
   Heart, AlertOctagon, Car, UsersRound, Baby,
   Scroll,
   Wand2, Search, Swords,
-  Settings, CreditCard,
+  Settings, CreditCard, UserCircle,
 } from 'lucide-react';
 import React from 'react';
 
@@ -32,6 +32,7 @@ const navSections: (NavSection | NavItem | 'separator')[] = [
   {
     title: 'CASE MANAGEMENT',
     items: [
+      { id: 'my-profile', label: 'My Profile', icon: UserCircle },
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'cases', label: 'Cases', icon: Briefcase },
       { id: 'ai-intake', label: 'AI Intake', icon: FilePlus },

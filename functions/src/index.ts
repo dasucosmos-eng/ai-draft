@@ -40,6 +40,9 @@ export { authPhoneVerify } from "./firebase-auth";
 export { authVerify } from "./firebase-auth";
 export { apiUserData } from './user-data';
 
+// Username Management
+export { apiUsernameCheck } from './username';
+export { apiUsernameClaim } from './username';
 
 // File Upload (Storage)
 export { fileUploadUrl } from './file-upload';

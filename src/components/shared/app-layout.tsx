@@ -16,8 +16,10 @@ import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 
 // Lazy loaded views - Core
+const MyProfileView = lazy(() => import('@/components/profile/my-profile-view').then(m => ({ default: m.MyProfileView })));
 const DashboardView = lazy(() => import('@/components/dashboard/dashboard-view').then(m => ({ default: m.DashboardView })));
 const CasesListView = lazy(() => import('@/components/cases/cases-list-view').then(m => ({ default: m.CasesListView })));
+
 const CaseDetailView = lazy(() => import('@/components/cases/case-detail-view').then(m => ({ default: m.CaseDetailView })));
 const AiIntakeView = lazy(() => import('@/components/intake/ai-intake-view').then(m => ({ default: m.AiIntakeView })));
 const AiDraftingView = lazy(() => import('@/components/drafting/ai-drafting-view').then(m => ({ default: m.AiDraftingView })));
@@ -86,6 +88,7 @@ function ViewLoader() {
 function renderView(view: string) {
   switch (view) {
     // Core
+    case 'my-profile': return <MyProfileView />;
     case 'dashboard': return <DashboardView />;
     case 'cases': return <CasesListView />;
     case 'case-detail': return <CaseDetailView />;
@@ -227,9 +230,16 @@ export function AppLayout() {
                       {initials}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="hidden sm:inline text-sm max-w-[120px] truncate">
-                    {profile.fullName || 'Advocate'}
-                  </span>
+                  <div className="hidden sm:flex flex-col items-start">
+                    <span className="text-sm font-medium max-w-[120px] truncate leading-tight">
+                      {profile.fullName || 'Advocate'}
+                    </span>
+                    {profile.username && (
+                      <span className="text-[10px] text-muted-foreground max-w-[120px] truncate leading-tight">
+                        @{profile.username}
+                      </span>
+                    )}
+                  </div>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
