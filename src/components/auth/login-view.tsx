@@ -30,8 +30,10 @@ export function LoginView() {
     setLoading(true);
     try {
       await googleAuth();
-    } catch {
-      toast.error('Failed to start Google authentication');
+    } catch (err: any) {
+      console.error('[Google Auth]', err);
+      toast.error(err?.message || 'Failed to start Google authentication');
+    } finally {
       setLoading(false);
     }
   };
