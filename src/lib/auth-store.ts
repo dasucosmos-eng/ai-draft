@@ -179,8 +179,26 @@ export async function verifyAndRestore(): Promise<boolean> {
 
 export async function googleAuth(): Promise<void> {
   const auth = getFirebaseAuth();
-  const result = await signInWithPopup(auth, googleProvider);
-  await processFirebaseUser(result.user);
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    await processFirebaseUser(result.user);
+  } catch (err: any) {
+    console.error('[auth] Google sign-in failed:', err?.code, err?.message);
+    // Re-throw with a user-friendly message based on error code
+    if (err?.code === 'auth/popup-blocked') {
+      throw new Error('Popup was blocked by your browser. Please allow popups for this site and try again.');
+    }
+    if (err?.code === 'auth/popup-closed-by-user') {
+      throw new Error('Sign-in popup was closed before completing.');
+    }
+    if (err?.code === 'auth/unauthorized-domain') {
+      throw new Error('This domain is not authorized for Google sign-in. Please contact support.');
+    }
+    if (err?.code === 'auth/invalid-api-key' || err?.code === 'auth/api-key-not-authorized') {
+      throw new Error('Firebase configuration error. Please check your API key.');
+    }
+    throw new Error(err?.message || 'Google sign-in failed');
+  }
 }
 
 /* ─── Email Sign-Up ─── */
