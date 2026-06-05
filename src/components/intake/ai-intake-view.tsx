@@ -25,6 +25,7 @@ import {
 import { MarkdownContent } from '@/components/shared/markdown-content';
 import { DocumentViewer } from '@/components/shared/document-viewer';
 import { generatePDF, downloadPDF } from '@/lib/pdf-generator';
+import { generateCaseNumber } from '@/lib/utils';
 import type { CaseItem, Client } from '@/lib/types';
 
 interface ExtractedCaseData {
@@ -315,6 +316,7 @@ export function AiIntakeView() {
       const caseId = uuidv4();
       const caseItem: CaseItem = {
         id: caseId,
+        caseNumber: generateCaseNumber(),
         title: data.caseTitle || data.caseType || (description ? description.slice(0, 80) : 'New Case'),
         description: data.facts || description,
         caseType: data.caseType || 'Civil',
@@ -964,7 +966,7 @@ export function AiIntakeView() {
                               )}
                             </div>
                           </div>
-                          <p className="text-xs text-muted-foreground line-clamp-2">{draft.content.substring(0, 200)}...</p>
+                          <p className="text-xs text-muted-foreground">{draft.content.substring(0, 200)}...</p>
                         </div>
                       ))}
                     </div>

@@ -18,7 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { v4 as uuidv4 } from 'uuid';
-import { cn, safeFormat } from '@/lib/utils';
+import { cn, safeFormat, generateCaseNumber } from '@/lib/utils';
 import {
   Briefcase, Plus, Search, Filter, ArrowUpDown,
   Calendar, MapPin, User, MoreVertical, Trash2, Eye
@@ -61,6 +61,7 @@ export function CasesListView() {
     }
     const caseItem: CaseItem = {
       id: uuidv4(),
+      caseNumber: generateCaseNumber(),
       title: newCase.title || '',
       description: newCase.description || '',
       caseType: newCase.caseType || 'Civil',

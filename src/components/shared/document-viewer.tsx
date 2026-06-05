@@ -81,7 +81,7 @@ export function DocumentViewer({ open, onOpenChange, title, content, onSave }: D
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col p-0">
+      <DialogContent className="sm:max-w-3xl max-h-[92vh] flex flex-col p-0">
         <DialogHeader className="flex flex-row items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <div className="flex items-center gap-3">
             <FileText className="h-5 w-5 text-primary" />
@@ -111,7 +111,7 @@ export function DocumentViewer({ open, onOpenChange, title, content, onSave }: D
           </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-auto">
           {editing ? (
             <Textarea
               value={editedContent}

@@ -214,7 +214,7 @@ export function AiDraftingView() {
               </div>
             </CardHeader>
             <CardContent>
-              <ScrollArea className="max-h-[500px]">
+              <ScrollArea className="max-h-[70vh]">
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   <MarkdownContent content={result.content || result.responseText || ''} />
                 </div>
