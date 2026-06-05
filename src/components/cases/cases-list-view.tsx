@@ -18,7 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { v4 as uuidv4 } from 'uuid';
-import { cn } from '@/lib/utils';
+import { cn, safeFormat } from '@/lib/utils';
 import {
   Briefcase, Plus, Search, Filter, ArrowUpDown,
   Calendar, MapPin, User, MoreVertical, Trash2, Eye
@@ -26,7 +26,6 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { cn } from '@/lib/utils';
 import type { CaseItem } from '@/lib/types';
 
 export function CasesListView() {
