@@ -32,20 +32,15 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.apiUserData = void 0;
 // @ts-nocheck
 const v2_1 = require("firebase-functions/v2");
 const admin = __importStar(require("firebase-admin"));
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const cors_1 = require("./cors");
 const secrets_1 = require("./secrets");
-/* ─── Verify Token ─── */
+/* ─── Verify Token (Firebase ID Token) ─── */
 async function verifyUid(req) {
-    const JWT_SECRET = process.env.JWT_SECRET || "aidraft-auth-secret-2026";
     // Support three token sources:
     // 1. Authorization header (standard)
     // 2. req.body.token (explicit body field)
@@ -56,7 +51,7 @@ async function verifyUid(req) {
     if (!token)
         return null;
     try {
-        const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+        const decoded = await admin.auth().verifyIdToken(token);
         return decoded.uid || null;
     }
     catch {
@@ -65,7 +60,7 @@ async function verifyUid(req) {
 }
 /* ─── Firestore Helpers ─── */
 function userDataRef(uid) {
-    return admin.firestore().collection("users").doc(uid).collection("data").doc("app");
+    return admin.firestore().collection("users").doc(uid).collection("app").doc("data");
 }
 /* ─── Handler ─── */
 const handler = async (req, res) => {
@@ -117,15 +112,28 @@ const handler = async (req, res) => {
             }
             case "save": {
                 // Smart merge — arrays are merged by ID (upsert), scalars are replaced
-                const { profile, cases, documents, tasks, timelineEvents, invoices, clients } = req.body || {};
+                const { profile, cases, documents, tasks, timelineEvents, invoices, clients, chatMessages, subscription } = req.body || {};
                 const updateData = {};
                 if (profile !== undefined)
                     updateData.profile = profile;
-                if (clients !== undefined)
-                    updateData.clients = clients;
                 // Merge arrays by ID — read existing, upsert incoming, return union
                 const existingDoc = await userDataRef(uid).get();
                 const existing = existingDoc.exists ? existingDoc.data() : {};
+                // Merge clients by ID (same logic as other arrays)
+                if (clients !== undefined && Array.isArray(clients)) {
+                    const existingClients = existing.clients || [];
+                    const existingClientIds = new Set(existingClients.map((c) => c.id));
+                    const incomingClientIds = new Set(clients.map((c) => c.id));
+                    updateData.clients = [
+                        ...existingClients.filter((c) => !incomingClientIds.has(c.id)),
+                        ...clients,
+                    ];
+                }
+                else if (clients === undefined && existing.clients) {
+                    // Don't overwrite existing clients if none sent
+                }
+                if (subscription !== undefined)
+                    updateData.subscription = subscription;
                 // ANTI-DATA-LOSS: Only block if ALL fields (including clients, profile, chatMessages)
                 // are empty/undefined AND existing Firestore doc has real data.
                 // This prevents blocking legitimate saves that have clients but empty cases
@@ -136,12 +144,14 @@ const handler = async (req, res) => {
                     (Array.isArray(tasks) && tasks.length > 0) ||
                     (Array.isArray(timelineEvents) && timelineEvents.length > 0) ||
                     (Array.isArray(invoices) && invoices.length > 0) ||
+                    (Array.isArray(chatMessages) && chatMessages.length > 0) ||
                     (profile && typeof profile === 'object' && Object.keys(profile).length > 0);
                 if (!hasIncomingData) {
                     const existingHasCases = (existing.cases?.length || 0) > 0;
                     const existingHasDocs = (existing.documents?.length || 0) > 0;
                     const existingHasClients = (existing.clients?.length || 0) > 0;
-                    const existingHasData = existingHasCases || existingHasDocs || existingHasClients;
+                    const existingHasChat = (existing.chatMessages?.length || 0) > 0;
+                    const existingHasData = existingHasCases || existingHasDocs || existingHasClients || existingHasChat;
                     if (existingHasData) {
                         console.warn(`[user-data] SAVE BLOCKED: incoming save has no data at all but`, `Firestore has data (cases:${existing.cases?.length || 0},`, `docs:${existing.documents?.length || 0}, clients:${existing.clients?.length || 0}).`, `Preventing data loss.`);
                         return res.json({
@@ -197,6 +207,15 @@ const handler = async (req, res) => {
                         ...invoices,
                     ];
                 }
+                if (chatMessages !== undefined && Array.isArray(chatMessages)) {
+                    const existingChat = existing.chatMessages || [];
+                    const existingIds = new Set(existingChat.map((m) => m.id));
+                    const incomingIds = new Set(chatMessages.map((m) => m.id));
+                    updateData.chatMessages = [
+                        ...existingChat.filter((m) => !incomingIds.has(m.id)),
+                        ...chatMessages,
+                    ];
+                }
                 updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
                 await userDataRef(uid).set(updateData, { merge: true });
                 return res.json({ success: true });
@@ -215,31 +234,38 @@ const handler = async (req, res) => {
                 const { case: caseItem } = req.body || {};
                 if (!caseItem || !caseItem.id)
                     return res.status(400).json({ error: "No case data" });
-                // Get current cases array
-                const doc = await userDataRef(uid).get();
-                const currentCases = doc.exists ? (doc.data()?.cases || []) : [];
-                const idx = currentCases.findIndex((c) => c.id === caseItem.id);
-                if (idx >= 0) {
-                    currentCases[idx] = caseItem;
-                }
-                else {
-                    currentCases.unshift(caseItem);
-                }
-                await userDataRef(uid).set({ cases: currentCases, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                // Use Firestore transaction to prevent race conditions on concurrent saves
+                await admin.firestore().runTransaction(async (transaction) => {
+                    const docRef = userDataRef(uid);
+                    const doc = await transaction.get(docRef);
+                    const currentCases = doc.exists ? (doc.data()?.cases || []) : [];
+                    const idx = currentCases.findIndex((c) => c.id === caseItem.id);
+                    if (idx >= 0) {
+                        currentCases[idx] = caseItem;
+                    }
+                    else {
+                        currentCases.unshift(caseItem);
+                    }
+                    transaction.set(docRef, { cases: currentCases, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                });
                 return res.json({ success: true });
             }
             case "deleteCase": {
                 const { caseId } = req.body || {};
                 if (!caseId)
                     return res.status(400).json({ error: "No case ID" });
-                const doc = await userDataRef(uid).get();
-                const currentCases = doc.exists ? (doc.data()?.cases || []) : [];
-                const filtered = currentCases.filter((c) => c.id !== caseId);
-                await userDataRef(uid).set({ cases: filtered, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                // Use Firestore transaction to prevent race conditions
+                await admin.firestore().runTransaction(async (transaction) => {
+                    const docRef = userDataRef(uid);
+                    const doc = await transaction.get(docRef);
+                    const currentCases = doc.exists ? (doc.data()?.cases || []) : [];
+                    const filtered = currentCases.filter((c) => c.id !== caseId);
+                    transaction.set(docRef, { cases: filtered, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                });
                 return res.json({ success: true });
             }
             default:
-                return res.status(400).json({ error: `Unknown action: ${action}` });
+                return res.status(400).json({ error: "Unknown action" });
         }
     }
     catch (err) {

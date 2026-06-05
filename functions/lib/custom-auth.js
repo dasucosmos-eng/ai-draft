@@ -99,6 +99,14 @@ exports.authGoogleUrl = v2_1.https.onRequest({ timeoutSeconds: 10, region: "us-c
     corsHandler(req, res, async () => {
         try {
             const state = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+            // BUG #13 FIX: Store OAuth state in Firestore for CSRF validation in callback
+            const db = getDb();
+            if (db) {
+                await db.collection("oauth_states").doc(state).set({
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    expiresAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000)), // 10 min
+                });
+            }
             const url = [
                 "https://accounts.google.com/o/oauth2/v2/auth",
                 `?client_id=${encodeURIComponent(GOOGLE_CLIENT_ID_RUNTIME)}`,
@@ -130,6 +138,28 @@ exports.authGoogleCallback = v2_1.https.onRequest({ timeoutSeconds: 30, region: 
     if (!code) {
         res.redirect("https://aidraft.bond/?error=missing_code");
         return;
+    }
+    // BUG #13 FIX: Validate OAuth state to prevent CSRF attacks
+    if (!state) {
+        res.redirect("https://aidraft.bond/?error=missing_state");
+        return;
+    }
+    const db = getDb();
+    if (db) {
+        try {
+            const stateDoc = await db.collection("oauth_states").doc(state).get();
+            if (!stateDoc.exists) {
+                console.error("[auth-google-callback] Invalid OAuth state (CSRF suspected)");
+                res.redirect("https://aidraft.bond/?error=invalid_state");
+                return;
+            }
+            // State validated — delete it so it can't be reused
+            await stateDoc.ref.delete();
+        }
+        catch (stateErr) {
+            console.warn("[auth-google-callback] State validation failed (non-blocking):", stateErr?.message);
+            // Continue if Firestore is unavailable — non-blocking
+        }
     }
     try {
         // Exchange authorization code for tokens

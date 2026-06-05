@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.apiAiDraft = void 0;
 // @ts-nocheck
 const secrets_1 = require("./secrets");
+const admin = __importStar(require("firebase-admin"));
 // ai-draft — Firebase Cloud Function
 // Generates legal documents using Sarvam → Groq → Gemini fallback
 // Returns: { success, data: { title, content, keyPoints, warnings } }
@@ -127,6 +128,20 @@ exports.apiAiDraft = v2_1.https.onRequest({
             res.status(405).json({ error: "Method not allowed" });
             return;
         }
+        const authToken = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+        if (!authToken) {
+            res.status(401).json({ error: "Authentication required" });
+            return;
+        }
+        let uid;
+        try {
+            const decoded = await admin.auth().verifyIdToken(authToken);
+            uid = decoded.uid;
+        }
+        catch {
+            res.status(401).json({ error: "Invalid or expired token" });
+            return;
+        }
         try {
             const { caseType, documentType, details, caseContext, extractedText, task, ...fields } = req.body;
             // Accept either documentType or task
@@ -139,6 +154,17 @@ exports.apiAiDraft = v2_1.https.onRequest({
             const resolvedCaseType = caseType || docType;
             // Build details from individual fields if `details` not provided
             let resolvedDetails = details || '';
+            // Handle case where details is an object (not a string)
+            if (resolvedDetails && typeof resolvedDetails === 'object') {
+                const objEntries = Object.entries(resolvedDetails)
+                    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+                    .map(([k, v]) => {
+                    const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+                    const val = Array.isArray(v) ? v.join(', ') : String(v);
+                    return `${label}: ${val}`;
+                });
+                resolvedDetails = objEntries.length > 0 ? objEntries.join('\n') : '';
+            }
             if (!resolvedDetails && Object.keys(fields).length > 0) {
                 const fieldEntries = Object.entries(fields)
                     .filter(([k, v]) => v && typeof v === 'string' && v.trim())

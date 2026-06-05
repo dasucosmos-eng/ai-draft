@@ -12,6 +12,10 @@
       "RAZORPAY_KEY_SECRET"
     ]
   },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
   "hosting": {
     "public": "out",
     "ignore": [

@@ -36,9 +36,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fileList = exports.fileDelete = exports.fileUploadUrl = void 0;
 const v2_1 = require("firebase-functions/v2");
@@ -56,15 +53,19 @@ const MAX_FILE_SIZE = {
     pro: 50 * 1024 * 1024, // 50MB per file
     enterprise: 100 * 1024 * 1024, // 100MB per file
 };
-// ─── JWT Verification (same as user-data.ts) ───
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+// ─── Firebase ID Token Verification ───
 async function verifyUid(req) {
-    const JWT_SECRET = process.env.JWT_SECRET || "aidraft-auth-secret-2026";
-    const token = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+    // Support three token sources:
+    // 1. Authorization header (standard)
+    // 2. req.body.token (explicit body field)
+    // 3. req.body._token (fallback for sendBeacon which can't set headers)
+    const token = (req.headers.authorization || "").replace("Bearer ", "") ||
+        req.body?.token ||
+        req.body?._token;
     if (!token)
         return null;
     try {
-        const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+        const decoded = await admin.auth().verifyIdToken(token);
         return decoded.uid || null;
     }
     catch {
@@ -162,7 +163,8 @@ exports.fileDelete = v2_1.https.onRequest({ timeoutSeconds: 15, region: "us-cent
                 return res.status(400).json({ error: "filePath required" });
             }
             // Only allow deleting files under user's directory
-            if (!filePath.startsWith(`users/${uid}/`)) {
+            // Block path traversal attempts (e.g., users/uid/../other_uid/file)
+            if (!filePath.startsWith(`users/${uid}/`) || filePath.includes('..')) {
                 return res.status(403).json({ error: "Cannot delete files outside your directory" });
             }
             await admin.storage().bucket().file(filePath).delete();
