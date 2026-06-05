@@ -21,7 +21,7 @@ export async function callSarvamStructured<T>(
   const response = await sarvamChat([
     { role: "system", content: fullPrompt },
     { role: "user", content: userPrompt },
-  ], undefined, model);
+  ], undefined, model, temperature);
 
   try {
     const cleaned = response.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -43,7 +43,7 @@ export async function callSarvamText(
   return sarvamChat([
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
-  ], undefined, model);
+  ], undefined, model, temperature);
 }
 
 // ─── Core: multi-turn chat ──────────────────────────────────

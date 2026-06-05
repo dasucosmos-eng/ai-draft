@@ -239,7 +239,8 @@ export async function detectLanguage(
 export async function sarvamChat(
   messages: SarvamMessage[],
   language?: string,
-  modelOverride?: string
+  modelOverride?: string,
+  temperatureOverride?: number
 ): Promise<string> {
   try {
     let systemInstruction = "";
@@ -263,7 +264,7 @@ export async function sarvamChat(
     const body: Record<string, unknown> = {
       model: modelOverride || "sarvam-m",
       messages: chatMessages,
-      temperature: 0.7,
+      temperature: temperatureOverride !== undefined ? temperatureOverride : 0.7,
       max_tokens: 4096,
     };
 
