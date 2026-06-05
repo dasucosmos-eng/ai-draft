@@ -5,7 +5,7 @@ import { getStorage } from 'firebase/storage';
 
 // Firebase Web App config (safe to be public in frontend)
 const firebaseConfig = {
-  apiKey: "AIzaSyD9Mjsf2BQsHgJevcJ-Dxa3zeVzx13DFqI",
+  apiKey: "AIzaSyChvDMZF4PjbZ4tQFHmDu2PGRVHzecXY8w",
   authDomain: "ai-draft-39e32.firebaseapp.com",
   projectId: "ai-draft-39e32",
   storageBucket: "ai-draft-39e32.firebasestorage.app",
