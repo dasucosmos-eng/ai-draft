@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-execution',
   apiTask: 'generateEP',
   module: 'execution' as const,
+  requiredFields: ['decreeHolderName', 'judgmentDebtorName', 'decreeDate'],
   formFields: [
     { key: 'decreeHolderName', label: 'Decree Holder Name', placeholder: 'Judgment Creditor', half: true },
     { key: 'judgmentDebtorName', label: 'Judgment Debtor Name', placeholder: 'Name of the judgment debtor', half: true },

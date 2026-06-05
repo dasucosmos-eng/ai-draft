@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-family',
   apiTask: 'generateMVOP',
   module: 'family' as const,
+  requiredFields: ['claimantName', 'accidentDate'],
   formFields: [
     { key: 'claimantName', label: 'Claimant Name', placeholder: 'Name of claimant/applicant', half: true },
     { key: 'age', label: 'Claimant Age', placeholder: 'Age', half: true },

@@ -1,10 +1,10 @@
-// @ts-nocheck
 import { parseLLMJSON } from "./parse-json";
 import { aiFunctionSecrets } from "./secrets";
 import * as admin from "firebase-admin";
 // ai-civil — Firebase Cloud Function
 // AI-powered Civil Original Side drafting module for AI Draft legal platform
 // Generates Plaints, Written Statements, Injunction IAs, Written Arguments,
+// Counter-Affidavits, Civil Appeals, Dismissal/Sist Applications,
 // parses Issues Framed orders, and extracts structured facts from narratives
 // Returns: { success, data: {...} } or { success: false, error: "..." }
 
@@ -37,6 +37,9 @@ Document drafting rules:
 - Written Statement: Para-wise reply to each plaint paragraph (admit/deny/partly admit/require proof), preliminary objections, additional pleas, set-off/counter-claim if applicable, verification
 - Injunction IA: Prima facie case, balance of convenience, irreparable loss test under Order 39 Rules 1 & 2 CPC, affidavit supporting facts
 - Written Arguments: Issue-wise analysis with facts + law, reference to pleadings and evidence, citation of relevant legal provisions
+- Counter-Affidavit / Rejoinder: Para-wise rebuttal of opposite party's affidavit claims, verification
+- Civil Appeal: Memorandum of Appeal, grounds of appeal, impugned order analysis, factual and legal submissions
+- Dismissal / Sist Application: Application for dismissal of suit, sist of proceedings, or withdrawal with grounds and prayer
 - Include section numbers and statutory references
 - Follow standard format for the relevant court (district court, high court)`;
 
@@ -124,12 +127,111 @@ const EXTRACT_FACTS_JSON_STRUCTURE = `{
   "missingInfo": ["Critical missing information 1 that would be needed for a plaint", "Critical missing information 2"]
 }`;
 
+const COUNTER_AFFIDAVIT_JSON_STRUCTURE = `{
+  "title": "Title of the Counter-Affidavit (e.g., 'Counter-Affidavit on behalf of Respondent')",
+  "content": "Full counter-affidavit text in PLAIN TEXT format (NO markdown, NO ** or ##). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings. Section sub-headings use Title Case. Include: cause title, jurat, deponent details, para-wise rebuttal of each claim in the original affidavit, additional facts, verification, and signature block",
+  "rebuttalPoints": [
+    {
+      "originalClaim": "The claim or assertion made in the original affidavit being rebutted",
+      "rebuttal": "Detailed factual and legal rebuttal of that claim"
+    }
+  ],
+  "keyPoints": ["Key legal point 1", "Key legal point 2"],
+  "warnings": ["Important warning or disclaimer about the draft"]
+}`;
+
+const APPEAL_JSON_STRUCTURE = `{
+  "title": "Title of the Memorandum of Appeal (e.g., 'First Appeal from Order under Section 104 CPC')",
+  "content": "Full memorandum of appeal text in PLAIN TEXT format (NO markdown, NO ** or ##). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings. Section sub-headings use Title Case. Include: cause title, memorandum of appeal, impugned order summary, grounds of appeal (numbered), factual submissions, legal submissions, prayer, verification, and signature block",
+  "groundsOfAppeal": [
+    {
+      "groundNumber": 1,
+      "groundText": "Full text of the ground of appeal with legal reasoning"
+    }
+  ],
+  "keyPoints": ["Key legal point 1", "Key legal point 2"],
+  "warnings": ["Important warning or disclaimer about the draft"]
+}`;
+
+const DISMISS_JSON_STRUCTURE = `{
+  "title": "Title of the Application (e.g., 'Application for Dismissal of Suit under Order XXV CPC' or 'Application for Sist of Proceedings')",
+  "content": "Full application text in PLAIN TEXT format (NO markdown, NO ** or ##). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings. Section sub-headings use Title Case. Include: cause title, grounds for the application, relevant facts, statutory provisions, prayer clause, verification, and signature block",
+  "keyPoints": ["Key legal point 1", "Key legal point 2"],
+  "warnings": ["Important warning or disclaimer about the draft"]
+}`;
+
+// ─── Flat-to-Nested Adapters ───────────────────────────────────────────────────
+
+/**
+ * Build matterFacts from flat fields sent by frontend views.
+ */
+function buildMatterFactsFromFlat(body: Record<string, any>): {
+  matterFacts: Record<string, any>;
+  valuation?: { suitValue: string; courtFeePaid: string };
+  courtFormat?: string;
+} {
+  const matterFacts: Record<string, any> = {
+    suitType: body.subjectMatter || body.documentType || 'CIVIL SUIT',
+    jurisdiction: body.jurisdiction || '',
+    courtName: body.courtName || '',
+    causeOfActionDate: body.filingDate || body.causeOfAction || '',
+    parties: [
+      ...(body.plaintiffName || body.applicantName ? [{
+        name: body.plaintiffName || body.applicantName || '',
+        address: body.plaintiffAddress || body.applicantAddress || '',
+        role: 'plaintiff',
+        counsel: '',
+      }] : []),
+      ...(body.defendantName || body.respondentName ? [{
+        name: body.defendantName || body.respondentName || '',
+        address: body.defendantAddress || body.respondentAddress || '',
+        role: 'defendant',
+        counsel: '',
+      }] : []),
+    ],
+    events: body.facts
+      ? body.facts.split('\n').filter(Boolean).map((f: string) => ({ date: '', description: f }))
+      : [],
+    reliefs: body.reliefSought || body.prayer ? [body.reliefSought || body.prayer] : [],
+    properties: body.propertyDetails ? [{ description: body.propertyDetails }] : [],
+  };
+
+  // Carry over any events array already present (for backward compat)
+  if (body.events && Array.isArray(body.events) && body.events.length > 0) {
+    matterFacts.events = body.events;
+  }
+
+  const valuation = body.valuation
+    ? { suitValue: String(body.valuation), courtFeePaid: '' }
+    : undefined;
+
+  const courtFormat = body.courtFormat || undefined;
+
+  return { matterFacts, valuation, courtFormat };
+}
+
+/**
+ * Parse a flat issues string (newline or number-delimited) into structured issue objects.
+ */
+function parseIssuesFromFlat(issuesText: string): { issueNumber: number; issueText: string }[] {
+  if (!issuesText) return [];
+  const lines = issuesText.split('\n').filter(Boolean);
+  return lines.map((line, i) => {
+    // Strip leading numbers like "1." or "1)" or "Issue 1:"
+    const cleaned = line.replace(/^[\d]+[\.\)\:]\s*/, '').replace(/^Issue\s+[\d]+[\.\:]\s*/i, '').trim();
+    return {
+      issueNumber: i + 1,
+      issueText: cleaned || line.trim(),
+    };
+  });
+}
+
 // ─── Task: generatePlaint ──────────────────────────────────────────────────────
 
-function buildPlaintPrompt(matterFacts: any, valuation?: any, courtFormat?: string): string {
-  const parties = matterFacts.parties || [];
-  const plaintiffs = parties.filter((p: any) => p.role === "plaintiff");
-  const defendants = parties.filter((p: any) => p.role === "defendant");
+function buildPlaintPrompt(matterFacts: Record<string, any>, valuation?: { suitValue: string; courtFeePaid: string }, courtFormat?: string): string {
+  const parties: Array<{ name: string; address: string; role: string; counsel: string }> = matterFacts.parties || [];
+  const plaintiffs = parties.filter((p) => p.role === "plaintiff");
+  const defendants = parties.filter((p) => p.role === "defendant");
 
   let prompt = `Draft a complete, court-ready Plaint for an original civil suit.
 
@@ -148,29 +250,29 @@ function buildPlaintPrompt(matterFacts: any, valuation?: any, courtFormat?: stri
 ## Parties
 
 ### Plaintiffs
-${plaintiffs.map((p: any, i: number) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
+${plaintiffs.map((p, i) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
 
 ### Defendants
-${defendants.map((p: any, i: number) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
+${defendants.map((p, i) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
 `;
 
   if (matterFacts.properties && matterFacts.properties.length > 0) {
     prompt += `\n## Properties\n`;
-    matterFacts.properties.forEach((prop: any, i: number) => {
+    matterFacts.properties.forEach((prop: Record<string, string>, i: number) => {
       prompt += `${i + 1}. ${prop.description}${prop.surveyNumber ? `, Survey No. ${prop.surveyNumber}` : ""}${prop.address ? `, ${prop.address}` : ""}\n`;
     });
   }
 
   if (matterFacts.contracts && matterFacts.contracts.length > 0) {
     prompt += `\n## Contracts/Agreements\n`;
-    matterFacts.contracts.forEach((c: any, i: number) => {
+    matterFacts.contracts.forEach((c: Record<string, string>, i: number) => {
       prompt += `${i + 1}. **Date:** ${c.date} | **Amount:** ${c.amount} | **Terms:** ${c.terms || "Not specified"} | **Breach:** ${c.breach || "Not specified"}\n`;
     });
   }
 
   prompt += `\n## Chronology of Events\n`;
   if (matterFacts.events && matterFacts.events.length > 0) {
-    matterFacts.events.forEach((e: any, i: number) => {
+    matterFacts.events.forEach((e: Record<string, string>, i: number) => {
       prompt += `${i + 1}. **${e.date || "Date unspecified"}:** ${e.description}\n`;
     });
   } else {
@@ -179,7 +281,7 @@ ${defendants.map((p: any, i: number) => `${i + 1}. **${p.name}**, ${p.address ||
 
   if (matterFacts.payments && matterFacts.payments.length > 0) {
     prompt += `\n## Payments\n`;
-    matterFacts.payments.forEach((p: any, i: number) => {
+    matterFacts.payments.forEach((p: Record<string, string>, i: number) => {
       prompt += `${i + 1}. **${p.date || "Date unspecified"}:** ${p.amount} — ${p.purpose || "Not specified"}\n`;
     });
   }
@@ -240,7 +342,7 @@ ${plaintText}
 
   if (additionalPleas && additionalPleas.length > 0) {
     prompt += `\n## Additional Pleas to Include
-${additionalPleas.map((p: string, i: number) => `${i + 1}. ${p}`).join("\n")}
+${additionalPleas.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 `;
   }
 
@@ -269,22 +371,22 @@ Be specific and legally precise in each reply. Reference relevant legal provisio
 // ─── Task: generateInjunctionIA ────────────────────────────────────────────────
 
 function buildInjunctionIAPrompt(
-  matterFacts: any,
+  matterFacts: Record<string, any>,
   injunctionType: string,
   propertyDetails?: { description: string; surveyNumber?: string; address?: string },
   urgencyFacts?: string,
   irreparableInjuryFacts?: string,
   courtFormat?: string
 ): string {
-  const parties = matterFacts.parties || [];
-  const plaintiffs = parties.filter((p: any) => p.role === "plaintiff");
-  const defendants = parties.filter((p: any) => p.role === "defendant");
+  const parties: Array<{ name: string; address: string; role: string; counsel: string }> = matterFacts.parties || [];
+  const plaintiffs = parties.filter((p) => p.role === "plaintiff" || p.role === "applicant");
+  const defendants = parties.filter((p) => p.role === "defendant" || p.role === "respondent");
 
   let prompt = `Draft a complete Interlocutory Application for an Injunction in a civil suit.
 
 ## Injunction Type
-- **Type:** ${injunctionType === "temporary" ? "Temporary Injunction" : injunctionType === "mandatory" ? "Mandatory Injunction" : "Status Quo Order"}
-- **Applicable Law:** ${injunctionType === "temporary" ? "Order 39 Rules 1 & 2 CPC" : injunctionType === "mandatory" ? "Order 39 Rule 2 CPC + Section 38-40 Specific Relief Act" : "Order 39 Rule 1 & 2 CPC (status quo)"}
+- **Type:** ${injunctionType === "temporary" ? "Temporary Injunction" : injunctionType === "mandatory" ? "Mandatory Injunction" : injunctionType === "permanent" ? "Permanent Injunction" : injunctionType === "prohibitory" ? "Prohibitory Injunction" : "Status Quo Order"}
+- **Applicable Law:** ${injunctionType === "temporary" ? "Order 39 Rules 1 & 2 CPC" : injunctionType === "mandatory" ? "Order 39 Rule 2 CPC + Section 38-40 Specific Relief Act" : injunctionType === "permanent" ? "Section 37-42 Specific Relief Act" : injunctionType === "prohibitory" ? "Order 39 Rule 1 & 2 CPC + Section 38 Specific Relief Act" : "Order 39 Rule 1 & 2 CPC (status quo)"}
 
 ## Court & Jurisdiction
 - **Jurisdiction:** ${matterFacts.jurisdiction || "Not specified"}
@@ -300,10 +402,10 @@ function buildInjunctionIAPrompt(
 ## Parties
 
 ### Applicants/Plaintiffs
-${plaintiffs.map((p: any, i: number) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
+${plaintiffs.map((p, i) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
 
 ### Respondents/Defendants
-${defendants.map((p: any, i: number) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
+${defendants.map((p, i) => `${i + 1}. **${p.name}**, ${p.address || "Address not specified"}${p.counsel ? ` (Advocate: ${p.counsel})` : ""}`).join("\n") || "Not specified"}
 `;
 
   if (propertyDetails) {
@@ -320,7 +422,7 @@ ${propertyDetails.address ? `- **Address:** ${propertyDetails.address}` : ""}
 - **Reliefs in Main Suit:** ${(matterFacts.reliefs || []).join(", ") || "Not specified"}
 
 ## Chronology of Events
-${(matterFacts.events || []).map((e: any, i: number) => `${i + 1}. **${e.date || "Date unspecified"}:** ${e.description}`).join("\n") || "No events provided."}
+${(matterFacts.events || []).map((e: Record<string, string>, i: number) => `${i + 1}. **${e.date || "Date unspecified"}:** ${e.description}`).join("\n") || "No events provided."}
 `;
 
   if (urgencyFacts) {
@@ -366,13 +468,13 @@ ${caseType}
 
   prompt += `
 ## Issues to be Argued
-${issues.map((iss: any) => `**Issue ${iss.issueNumber}:** ${iss.issueText}`).join("\n")}
+${issues.map((iss) => `**Issue ${iss.issueNumber}:** ${iss.issueText}`).join("\n")}
 `;
 
   if (evidence && evidence.length > 0) {
     prompt += `\n## Evidence on Record
 `;
-    evidence.forEach((ev: any) => {
+    evidence.forEach((ev) => {
       prompt += `- **Exhibit ${ev.exhibitNumber}** (${ev.type}): ${ev.description}`;
       if (ev.gist) prompt += ` | Gist: ${ev.gist}`;
       prompt += `\n`;
@@ -396,6 +498,130 @@ For EACH issue, provide:
 5. A detailed argument draft combining facts, evidence, and law
 
 Also include an overall introduction and conclusion with prayer.`;
+
+  return prompt;
+}
+
+// ─── Task: generateCounter ────────────────────────────────────────────────────
+
+function buildCounterPrompt(body: Record<string, any>): string {
+  let prompt = `Draft a complete, court-ready Counter-Affidavit / Rejoinder.
+
+## Deponent Details
+- **Name:** ${body.deponentName || "Not specified"}
+- **Designation:** ${body.designation || "Not specified"}
+
+## Case Details
+- **Respondent (filing counter):** ${body.respondentName || "Not specified"}
+- **Petitioner (original):** ${body.petitionerName || "Not specified"}
+- **Case Number:** ${body.caseNumber || "Not specified"}
+- **Court:** ${body.courtName || "Not specified"}
+
+## Original Relief Sought by Petitioner
+${body.originalRelief || "Not specified"}
+
+## Grounds for Rejection / Opposition
+${body.rejectionGrounds || "Not specified"}
+
+## Counter Facts (Factual Rebuttal)
+${body.facts || "Not specified"}
+
+## Supporting Documents
+${body.supportingDocuments || "Not specified"}
+
+Draft the Counter-Affidavit following the standard court format. Include:
+1. Cause title with court name, case number, parties
+2. Jurat and deponent details
+3. Para-wise rebuttal of each material claim in the original affidavit/petition
+4. Additional facts in support of the counter
+5. List of supporting documents annexed
+6. Verification and signature block
+
+Ensure the rebuttal is specific, legally grounded, and properly structured. Reference relevant statutory provisions and case law.`;
+
+  return prompt;
+}
+
+// ─── Task: generateAppeal ───────────────────────────────────────────────────────
+
+function buildAppealPrompt(body: Record<string, any>): string {
+  let prompt = `Draft a complete, court-ready Memorandum of Civil Appeal.
+
+## Appellate Party Details
+- **Appellant:** ${body.appellantName || "Not specified"}
+- **Respondent:** ${body.respondentName || "Not specified"}
+
+## Court Details
+- **Lower Court (passed decree):** ${body.lowerCourt || "Not specified"}
+- **Appellate Court:** ${body.appealCourt || "Not specified"}
+- **Decree/Order Date:** ${body.decreeDate || "Not specified"}
+- **Original Suit Number:** ${body.suitNumber || "Not specified"}
+
+## Impugned Order Summary
+${body.impugnedOrder || "Not specified"}
+
+## Grounds of Appeal
+${body.groundsOfAppeal || "Not specified"}
+
+## Relevant Facts
+${body.facts || "Not specified"}
+
+## Relief Sought in Appeal
+${body.reliefSought || "Not specified"}
+
+Draft the Memorandum of Appeal following Section 100 / Section 104 CPC as applicable. Include:
+1. Cause title with appellate court name, appeal number, parties
+2. Details of the impugned order/decree and the lower court
+3. Valuation and court fee for the appeal
+4. Numbered grounds of appeal with detailed legal and factual reasoning
+5. Factual submissions
+6. Legal submissions with statutory references
+7. Prayer clause setting out the relief sought
+8. Verification and signature block
+
+Ensure proper reference to the limit on grounds under Section 100 CPC (substantial question of law) if applicable.`;
+
+  return prompt;
+}
+
+// ─── Task: generateDismiss ───────────────────────────────────────────────────
+
+function buildDismissPrompt(body: Record<string, any>): string {
+  const dismissType = body.dismissalType || "Dismissal of Suit";
+  let prompt = `Draft a complete, court-ready Application for ${dismissType}.
+
+## Applicant & Respondent
+- **Applicant:** ${body.applicantName || "Not specified"}
+- **Respondent:** ${body.respondentName || "Not specified"}
+
+## Case Details
+- **Case Number:** ${body.caseNumber || "Not specified"}
+- **Court:** ${body.courtName || "Not specified"}
+- **Type of Application:** ${dismissType}
+
+## Grounds
+${body.grounds || "Not specified"}
+
+## Relevant Facts
+${body.facts || "Not specified"}
+
+## Prayer
+${body.prayer || "Not specified"}
+
+Draft the Application following the appropriate provisions of CPC:
+- If Dismissal of Suit: Order XXV CPC
+- If Sist of Proceedings: Order XXV Rule 1 CPC
+- If Withdrawal: Order XXV Rule 1 CPC read with Rule 2
+
+Include:
+1. Cause title with court name, case number, parties
+2. Grounds for the application in numbered paragraphs
+3. Relevant facts supporting the grounds
+4. Statutory provisions relied upon
+5. Prayer clause setting out specific relief sought
+6. Verification and signature block
+
+Ensure proper legal terminology and statutory references.`;
 
   return prompt;
 }
@@ -456,6 +682,47 @@ Be thorough — do not miss any parties, dates, amounts, or properties mentioned
   return prompt;
 }
 
+// ─── Generic Document Prompt (for generateDocument fallback) ────────────────────
+
+function buildGenericDocumentPrompt(body: Record<string, any>): string {
+  return `Draft a complete, court-ready civil litigation document based on the information provided below.
+
+## Document Type
+${body.documentType || "Civil Suit Document"}
+
+## Parties
+${body.plaintiffName ? `- **Plaintiff:** ${body.plaintiffName}` : ""}
+${body.defendantName ? `- **Defendant:** ${body.defendantName}` : ""}
+
+## Court
+${body.courtName || "Not specified"}
+
+## Cause of Action
+${body.causeOfAction || "Not specified"}
+
+## Facts
+${body.facts || "Not specified"}
+
+## Relief Sought
+${body.reliefSought || "Not specified"}
+
+Draft the document following the appropriate provisions of the Code of Civil Procedure, 1908 and relevant substantive law. Include:
+1. Proper cause title
+2. Relevant factual narration in numbered paragraphs
+3. Cause of action
+4. Appropriate reliefs
+5. Verification and signature block
+
+Ensure proper statutory references and legal terminology throughout.`;
+}
+
+const GENERIC_DOCUMENT_JSON_STRUCTURE = `{
+  "title": "Title of the document",
+  "content": "Full document text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings. Include all necessary sections for a court-ready document.",
+  "keyPoints": ["Key legal point 1", "Key legal point 2"],
+  "warnings": ["Important warning or disclaimer about the draft"]
+}`;
+
 // ─── Main Cloud Function ───────────────────────────────────────────────────────
 
 export const apiAiCivil = https.onRequest(
@@ -488,52 +755,156 @@ export const apiAiCivil = https.onRequest(
         if (!task) {
           res.status(400).json({
             success: false,
-            error: "task is required. Valid tasks: generatePlaint, generateWS, generateInjunctionIA, generateWrittenArguments, parseIssues, extractFacts",
+            error: "task is required. Valid tasks: generateDocument, generatePlaint, generateWS, generateInjunctionIA, generateWrittenArguments, generateCounter, generateAppeal, generateDismiss, parseIssues, extractFacts",
           });
           return;
         }
 
-        console.log(`[ai-civil] Task: ${task}`);
+        console.log(`[ai-civil] Task: ${task}, UID: ${uid}`);
 
         switch (task) {
           // ────────────────────────────────────────────────────────────────────
-          // TASK 1: generatePlaint
+          // TASK 0: generateDocument — routes to appropriate handler based on fields
+          // ────────────────────────────────────────────────────────────────────
+          case "generateDocument": {
+            const body = req.body;
+
+            // Route to parseIssues if orderText is provided
+            if (body.orderText) {
+              console.log("[ai-civil] generateDocument routing to parseIssues (orderText provided)");
+              req.body.task = "parseIssues";
+              // Fall through by calling parseIssues logic inline
+              const orderText = body.orderText;
+
+              if (!orderText) {
+                res.status(400).json({ success: false, error: "orderText is required for parseIssues." });
+                return;
+              }
+
+              const userPrompt = buildParseIssuesPrompt(orderText);
+
+              let data: { issues: { issueNumber: number; issueText: string; type: "question_of_law" | "question_of_fact" | "mixed"; }[] };
+              try {
+                data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PARSE_ISSUES_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              } catch (sarvamErr) {
+                console.error("[ai-civil] Sarvam failed for parseIssues, falling back to Groq:", sarvamErr?.message);
+                try {
+                  data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PARSE_ISSUES_JSON_STRUCTURE, 0.3);
+                } catch (groqErr) {
+                  console.error("[ai-civil] Groq failed for parseIssues, falling back to Gemini:", groqErr?.message);
+                  const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${PARSE_ISSUES_JSON_STRUCTURE}`;
+                  const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+                  try { data = parseLLMJSON(geminiResponse); } catch (pe) {
+                    throw new Error("Could not parse Gemini: " + pe?.message);
+                  }
+                }
+              }
+
+              logUsage("ai-civil", uid, 3000);
+              data = stripMarkdownFromData(data);
+              res.json({ success: true, data });
+              return;
+            }
+
+            // Route to generatePlaint if plaintiffName and defendantName are provided
+            if (body.plaintiffName && body.defendantName) {
+              console.log("[ai-civil] generateDocument routing to generatePlaint (plaintiffName + defendantName provided)");
+              // Build matterFacts from flat fields
+              const { matterFacts, valuation, courtFormat } = buildMatterFactsFromFlat(body);
+
+              const userPrompt = buildPlaintPrompt(matterFacts, valuation, courtFormat);
+
+              let data: { title: string; content: string; keyPoints: string[]; warnings: string[]; };
+              try {
+                data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PLAINT_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              } catch (sarvamErr) {
+                console.error("[ai-civil] Sarvam failed for generatePlaint, falling back to Groq:", sarvamErr?.message);
+                try {
+                  data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PLAINT_JSON_STRUCTURE, 0.3);
+                } catch (groqErr) {
+                  console.error("[ai-civil] Groq failed for generatePlaint, falling back to Gemini:", groqErr?.message);
+                  const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${PLAINT_JSON_STRUCTURE}`;
+                  const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+                  try { data = parseLLMJSON(geminiResponse); } catch (pe) {
+                    throw new Error("Could not parse Gemini: " + pe?.message);
+                  }
+                }
+              }
+
+              logUsage("ai-civil", uid, 3000);
+              data = stripMarkdownFromData(data);
+              res.json({ success: true, data });
+              return;
+            }
+
+            // Fallback: generate a generic civil document
+            console.log("[ai-civil] generateDocument using generic document fallback");
+            const genericPrompt = buildGenericDocumentPrompt(body);
+
+            let genericData: { title: string; content: string; keyPoints: string[]; warnings: string[]; };
+            try {
+              genericData = await callSarvamStructured<typeof genericData>(SYSTEM_PROMPT, genericPrompt, GENERIC_DOCUMENT_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            } catch (sarvamErr) {
+              console.error("[ai-civil] Sarvam failed for generateDocument, falling back to Groq:", sarvamErr?.message);
+              try {
+                genericData = await callGroqStructured<typeof genericData>(SYSTEM_PROMPT, genericPrompt, GENERIC_DOCUMENT_JSON_STRUCTURE, 0.3);
+              } catch (groqErr) {
+                console.error("[ai-civil] Groq failed for generateDocument, falling back to Gemini:", groqErr?.message);
+                const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${GENERIC_DOCUMENT_JSON_STRUCTURE}`;
+                const geminiResponse = await callGeminiText(geminiPrompt, genericPrompt, 0.3);
+                try { genericData = parseLLMJSON(geminiResponse); } catch (pe) {
+                  throw new Error("Could not parse Gemini: " + pe?.message);
+                }
+              }
+            }
+
+            logUsage("ai-civil", uid, 3000);
+            genericData = stripMarkdownFromData(genericData);
+            res.json({ success: true, data: genericData });
+            break;
+          }
+
+          // ────────────────────────────────────────────────────────────────────
+          // TASK 1: generatePlaint (with flat-to-nested adapter)
           // ────────────────────────────────────────────────────────────────────
           case "generatePlaint": {
-            const { matterFacts, valuation, courtFormat } = req.body;
+            const body = req.body;
 
-            if (!matterFacts || !matterFacts.parties || !matterFacts.events) {
+            // Accept both nested matterFacts (backward compat) and flat fields
+            let matterFacts: Record<string, any>;
+            let valuation: { suitValue: string; courtFeePaid: string } | undefined;
+            let courtFormat: string | undefined;
+
+            if (body.matterFacts && body.matterFacts.parties && body.matterFacts.events) {
+              // Already nested — use directly
+              matterFacts = body.matterFacts;
+              valuation = body.valuation;
+              courtFormat = body.courtFormat;
+            } else {
+              // Flat fields from frontend — build nested objects
+              const adapted = buildMatterFactsFromFlat(body);
+              matterFacts = adapted.matterFacts;
+              valuation = adapted.valuation;
+              courtFormat = adapted.courtFormat;
+            }
+
+            if (!matterFacts.parties.length && !matterFacts.events.length) {
               res.status(400).json({
                 success: false,
-                error: "matterFacts with parties and events is required for generatePlaint.",
+                error: "Parties and events/facts are required for generatePlaint. Provide plaintiffName and defendantName (or matterFacts.parties), and facts (or matterFacts.events).",
               });
               return;
             }
 
             const userPrompt = buildPlaintPrompt(matterFacts, valuation, courtFormat);
 
-            let data: {
-              title: string;
-              content: string;
-              keyPoints: string[];
-              warnings: string[];
-            };
+            let data: { title: string; content: string; keyPoints: string[]; warnings: string[]; };
             try {
-              data = await callSarvamStructured<{
-                title: string;
-                content: string;
-                keyPoints: string[];
-                warnings: string[];
-              }>(SYSTEM_PROMPT, userPrompt, PLAINT_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PLAINT_JSON_STRUCTURE, 0.3, "sarvam-105b");
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for generatePlaint, falling back to Groq:", sarvamErr?.message);
               try {
-                data = await callGroqStructured<{
-                  title: string;
-                  content: string;
-                  keyPoints: string[];
-                  warnings: string[];
-                }>(SYSTEM_PROMPT, userPrompt, PLAINT_JSON_STRUCTURE, 0.3);
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PLAINT_JSON_STRUCTURE, 0.3);
               } catch (groqErr) {
                 console.error("[ai-civil] Groq failed for generatePlaint, falling back to Gemini:", groqErr?.message);
                 const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${PLAINT_JSON_STRUCTURE}`;
@@ -544,7 +915,7 @@ export const apiAiCivil = https.onRequest(
               }
             }
 
-            logUsage("ai-civil", undefined, 3000);
+            logUsage("ai-civil", uid, 3000);
 
             data = stripMarkdownFromData(data);
             res.json({ success: true, data });
@@ -552,7 +923,7 @@ export const apiAiCivil = https.onRequest(
           }
 
           // ────────────────────────────────────────────────────────────────────
-          // TASK 2: generateWS
+          // TASK 2: generateWS (unchanged except error message)
           // ────────────────────────────────────────────────────────────────────
           case "generateWS": {
             const { plaintText, defendantName, defendantCounsel, additionalPleas, setOffCounterClaim } = req.body;
@@ -560,7 +931,7 @@ export const apiAiCivil = https.onRequest(
             if (!plaintText || !defendantName) {
               res.status(400).json({
                 success: false,
-                error: "plaintText and defendantName are required for generateWS.",
+                error: "Please enter the Plaint Text (paste the full plaint allegations) and Defendant Name before generating a Written Statement.",
               });
               return;
             }
@@ -579,31 +950,11 @@ export const apiAiCivil = https.onRequest(
               preliminarySubmissions: string[];
             };
             try {
-              data = await callSarvamStructured<{
-                title: string;
-                content: string;
-                paraReplies: {
-                  paraNumber: number;
-                  plainText: string;
-                  stance: "admit" | "deny" | "partly_admit" | "require_proof";
-                  replyDraft: string;
-                }[];
-                preliminarySubmissions: string[];
-              }>(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for generateWS, falling back to Groq:", sarvamErr?.message);
               try {
-                data = await callGroqStructured<{
-                  title: string;
-                  content: string;
-                  paraReplies: {
-                    paraNumber: number;
-                    plainText: string;
-                    stance: "admit" | "deny" | "partly_admit" | "require_proof";
-                    replyDraft: string;
-                  }[];
-                  preliminarySubmissions: string[];
-                }>(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3);
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3);
               } catch (groqErr) {
                 console.error("[ai-civil] Groq failed for generateWS, falling back to Gemini:", groqErr?.message);
                 const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${WS_JSON_STRUCTURE}`;
@@ -614,7 +965,7 @@ export const apiAiCivil = https.onRequest(
               }
             }
 
-            logUsage("ai-civil", undefined, 3000);
+            logUsage("ai-civil", uid, 3000);
 
             data = stripMarkdownFromData(data);
             res.json({ success: true, data });
@@ -622,48 +973,70 @@ export const apiAiCivil = https.onRequest(
           }
 
           // ────────────────────────────────────────────────────────────────────
-          // TASK 3: generateInjunctionIA
+          // TASK 3: generateInjunctionIA (with flat-to-nested adapter)
           // ────────────────────────────────────────────────────────────────────
           case "generateInjunctionIA": {
-            const { matterFacts, injunctionType, propertyDetails, urgencyFacts, irreparableInjuryFacts, courtFormat } = req.body;
+            const body = req.body;
 
-            if (!matterFacts || !injunctionType) {
+            // Accept both nested matterFacts (backward compat) and flat fields
+            let matterFacts: Record<string, any>;
+            let injunctionType: string;
+            let propertyDetails: { description: string; surveyNumber?: string; address?: string } | undefined;
+            let urgencyFacts: string | undefined;
+            let irreparableInjuryFacts: string | undefined;
+            let courtFormat: string | undefined;
+
+            if (body.matterFacts && body.matterFacts.parties) {
+              // Already nested — use directly
+              matterFacts = body.matterFacts;
+              injunctionType = body.injunctionType;
+              propertyDetails = body.propertyDetails;
+              urgencyFacts = body.urgencyFacts;
+              irreparableInjuryFacts = body.irreparableInjuryFacts;
+              courtFormat = body.courtFormat;
+            } else {
+              // Flat fields from frontend — build nested objects
+              const adapted = buildMatterFactsFromFlat(body);
+              matterFacts = adapted.matterFacts;
+              // Map flat fields to expected parameters
+              injunctionType = body.injunctionType || "temporary";
+              // Use facts as urgencyFacts and grounds as irreparableInjuryFacts if provided
+              urgencyFacts = body.facts || undefined;
+              irreparableInjuryFacts = body.grounds || undefined;
+              propertyDetails = body.propertyDetails ? { description: body.propertyDetails } : undefined;
+              courtFormat = adapted.courtFormat;
+
+              // Also carry over reliefs from prayer
+              if (body.prayer) {
+                matterFacts.reliefs = [body.prayer];
+              }
+            }
+
+            if (!injunctionType) {
               res.status(400).json({
                 success: false,
-                error: "matterFacts and injunctionType are required for generateInjunctionIA.",
+                error: "injunctionType is required for generateInjunctionIA.",
               });
               return;
             }
 
-            if (!["temporary", "mandatory", "status_quo"].includes(injunctionType)) {
+            if (!matterFacts.parties.length) {
               res.status(400).json({
                 success: false,
-                error: "injunctionType must be 'temporary', 'mandatory', or 'status_quo'.",
+                error: "Parties are required for generateInjunctionIA. Provide applicantName and respondentName (or matterFacts.parties).",
               });
               return;
             }
 
             const userPrompt = buildInjunctionIAPrompt(matterFacts, injunctionType, propertyDetails, urgencyFacts, irreparableInjuryFacts, courtFormat);
 
-            let data: {
-              title: string;
-              content: string;
-              affidavitContent: string;
-            };
+            let data: { title: string; content: string; affidavitContent: string; };
             try {
-              data = await callSarvamStructured<{
-                title: string;
-                content: string;
-                affidavitContent: string;
-              }>(SYSTEM_PROMPT, userPrompt, INJUNCTION_IA_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, INJUNCTION_IA_JSON_STRUCTURE, 0.3, "sarvam-105b");
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for generateInjunctionIA, falling back to Groq:", sarvamErr?.message);
               try {
-                data = await callGroqStructured<{
-                  title: string;
-                  content: string;
-                  affidavitContent: string;
-                }>(SYSTEM_PROMPT, userPrompt, INJUNCTION_IA_JSON_STRUCTURE, 0.3);
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, INJUNCTION_IA_JSON_STRUCTURE, 0.3);
               } catch (groqErr) {
                 console.error("[ai-civil] Groq failed for generateInjunctionIA, falling back to Gemini:", groqErr?.message);
                 const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${INJUNCTION_IA_JSON_STRUCTURE}`;
@@ -674,7 +1047,7 @@ export const apiAiCivil = https.onRequest(
               }
             }
 
-            logUsage("ai-civil", undefined, 3000);
+            logUsage("ai-civil", uid, 3000);
 
             data = stripMarkdownFromData(data);
             res.json({ success: true, data });
@@ -682,20 +1055,51 @@ export const apiAiCivil = https.onRequest(
           }
 
           // ────────────────────────────────────────────────────────────────────
-          // TASK 4: generateWrittenArguments
+          // TASK 4: generateWrittenArguments (with flat-to-nested adapter)
           // ────────────────────────────────────────────────────────────────────
           case "generateWrittenArguments": {
-            const { issues, evidence, pleadings, caseType, courtFormat } = req.body;
+            const body = req.body;
 
-            if (!issues || !Array.isArray(issues) || issues.length === 0) {
-              res.status(400).json({
-                success: false,
-                error: "issues array with at least one issue is required for generateWrittenArguments.",
-              });
-              return;
+            // Accept both nested issues array (backward compat) and flat fields
+            let issues: { issueNumber: number; issueText: string }[];
+            let evidence: { exhibitNumber: string; description: string; type: string; gist?: string }[];
+            let pleadings: { plaintSummary?: string; wsSummary?: string };
+            let caseType: string;
+            let courtFormat: string | undefined;
+
+            if (body.issues && Array.isArray(body.issues) && body.issues.length > 0 && typeof body.issues[0] === "object") {
+              // Already structured array
+              issues = body.issues;
+              evidence = body.evidence || [];
+              pleadings = body.pleadings || {};
+              caseType = body.caseType || "Civil Suit";
+              courtFormat = body.courtFormat;
+            } else {
+              // Flat fields from frontend — build structured objects
+              issues = parseIssuesFromFlat(body.issues || "");
+              if (issues.length === 0) {
+                res.status(400).json({
+                  success: false,
+                  error: "issues (text) is required for generateWrittenArguments. Provide at least one issue to be argued.",
+                });
+                return;
+              }
+
+              evidence = [];
+              // Build pleadings from flat facts/arguments
+              const wsSummary = body.arguments || "";
+              const plaintSummary = body.facts || "";
+              pleadings = { plaintSummary, wsSummary };
+              caseType = body.caseTitle ? `${body.caseTitle} — ${body.partyPosition || "Plaintiff"}` : `Civil Suit — ${body.partyPosition || "Plaintiff"}`;
+              courtFormat = body.courtName || undefined;
+
+              // If caseLaws or conclusion are provided, append to pleadings
+              if (body.caseLaws) {
+                pleadings.plaintSummary = `${pleadings.plaintSummary}\n\nRelevant Case Laws / Precedents:\n${body.caseLaws}`;
+              }
             }
 
-            const userPrompt = buildWrittenArgumentsPrompt(issues, evidence || [], pleadings || {}, caseType || "Civil Suit", courtFormat);
+            const userPrompt = buildWrittenArgumentsPrompt(issues, evidence, pleadings, caseType, courtFormat);
 
             let data: {
               title: string;
@@ -711,35 +1115,11 @@ export const apiAiCivil = https.onRequest(
               conclusion: string;
             };
             try {
-              data = await callSarvamStructured<{
-                title: string;
-                content: string;
-                issueArguments: {
-                  issueNumber: number;
-                  heading: string;
-                  factsFor: string[];
-                  factsAgainst: string[];
-                  legalProvisions: string[];
-                  argumentDraft: string;
-                }[];
-                conclusion: string;
-              }>(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for generateWrittenArguments, falling back to Groq:", sarvamErr?.message);
               try {
-                data = await callGroqStructured<{
-                  title: string;
-                  content: string;
-                  issueArguments: {
-                    issueNumber: number;
-                    heading: string;
-                    factsFor: string[];
-                    factsAgainst: string[];
-                    legalProvisions: string[];
-                    argumentDraft: string;
-                  }[];
-                  conclusion: string;
-                }>(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3);
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3);
               } catch (groqErr) {
                 console.error("[ai-civil] Groq failed for generateWrittenArguments, falling back to Gemini:", groqErr?.message);
                 const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${WRITTEN_ARGUMENTS_JSON_STRUCTURE}`;
@@ -750,7 +1130,7 @@ export const apiAiCivil = https.onRequest(
               }
             }
 
-            logUsage("ai-civil", undefined, 3000);
+            logUsage("ai-civil", uid, 3000);
 
             data = stripMarkdownFromData(data);
             res.json({ success: true, data });
@@ -781,23 +1161,11 @@ export const apiAiCivil = https.onRequest(
               }[];
             };
             try {
-              data = await callSarvamStructured<{
-                issues: {
-                  issueNumber: number;
-                  issueText: string;
-                  type: "question_of_law" | "question_of_fact" | "mixed";
-                }[];
-              }>(SYSTEM_PROMPT, userPrompt, PARSE_ISSUES_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PARSE_ISSUES_JSON_STRUCTURE, 0.3, "sarvam-105b");
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for parseIssues, falling back to Groq:", sarvamErr?.message);
               try {
-                data = await callGroqStructured<{
-                  issues: {
-                    issueNumber: number;
-                    issueText: string;
-                    type: "question_of_law" | "question_of_fact" | "mixed";
-                  }[];
-                }>(SYSTEM_PROMPT, userPrompt, PARSE_ISSUES_JSON_STRUCTURE, 0.3);
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, PARSE_ISSUES_JSON_STRUCTURE, 0.3);
               } catch (groqErr) {
                 console.error("[ai-civil] Groq failed for parseIssues, falling back to Gemini:", groqErr?.message);
                 const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${PARSE_ISSUES_JSON_STRUCTURE}`;
@@ -808,7 +1176,7 @@ export const apiAiCivil = https.onRequest(
               }
             }
 
-            logUsage("ai-civil", undefined, 3000);
+            logUsage("ai-civil", uid, 3000);
 
             data = stripMarkdownFromData(data);
             res.json({ success: true, data });
@@ -840,25 +1208,11 @@ export const apiAiCivil = https.onRequest(
               missingInfo: string[];
             };
             try {
-              data = await callSarvamStructured<{
-                parties: { name: string; address: string; role: string }[];
-                dates: { date: string; event: string }[];
-                amounts: { amount: string; context: string }[];
-                properties: { description: string }[];
-                keyFacts: string[];
-                missingInfo: string[];
-              }>(SYSTEM_PROMPT, userPrompt, EXTRACT_FACTS_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, EXTRACT_FACTS_JSON_STRUCTURE, 0.3, "sarvam-105b");
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for extractFacts, falling back to Groq:", sarvamErr?.message);
               try {
-                data = await callGroqStructured<{
-                  parties: { name: string; address: string; role: string }[];
-                  dates: { date: string; event: string }[];
-                  amounts: { amount: string; context: string }[];
-                  properties: { description: string }[];
-                  keyFacts: string[];
-                  missingInfo: string[];
-                }>(SYSTEM_PROMPT, userPrompt, EXTRACT_FACTS_JSON_STRUCTURE, 0.3);
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, EXTRACT_FACTS_JSON_STRUCTURE, 0.3);
               } catch (groqErr) {
                 console.error("[ai-civil] Groq failed for extractFacts, falling back to Gemini:", groqErr?.message);
                 const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${EXTRACT_FACTS_JSON_STRUCTURE}`;
@@ -869,7 +1223,139 @@ export const apiAiCivil = https.onRequest(
               }
             }
 
-            logUsage("ai-civil", undefined, 3000);
+            logUsage("ai-civil", uid, 3000);
+
+            data = stripMarkdownFromData(data);
+            res.json({ success: true, data });
+            break;
+          }
+
+          // ────────────────────────────────────────────────────────────────────
+          // TASK 7: generateCounter — Counter-Affidavit / Rejoinder
+          // ────────────────────────────────────────────────────────────────────
+          case "generateCounter": {
+            const body = req.body;
+
+            if (!body.respondentName && !body.deponentName) {
+              res.status(400).json({
+                success: false,
+                error: "Respondent Name or Deponent Name is required for generateCounter.",
+              });
+              return;
+            }
+
+            const userPrompt = buildCounterPrompt(body);
+
+            let data: {
+              title: string;
+              content: string;
+              rebuttalPoints: { originalClaim: string; rebuttal: string }[];
+              keyPoints: string[];
+              warnings: string[];
+            };
+            try {
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, COUNTER_AFFIDAVIT_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            } catch (sarvamErr) {
+              console.error("[ai-civil] Sarvam failed for generateCounter, falling back to Groq:", sarvamErr?.message);
+              try {
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, COUNTER_AFFIDAVIT_JSON_STRUCTURE, 0.3);
+              } catch (groqErr) {
+                console.error("[ai-civil] Groq failed for generateCounter, falling back to Gemini:", groqErr?.message);
+                const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${COUNTER_AFFIDAVIT_JSON_STRUCTURE}`;
+                const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+                try { data = parseLLMJSON(geminiResponse); } catch (pe) {
+                  throw new Error("Could not parse Gemini: " + pe?.message);
+                }
+              }
+            }
+
+            logUsage("ai-civil", uid, 3000);
+
+            data = stripMarkdownFromData(data);
+            res.json({ success: true, data });
+            break;
+          }
+
+          // ────────────────────────────────────────────────────────────────────
+          // TASK 8: generateAppeal — Civil Appeal
+          // ────────────────────────────────────────────────────────────────────
+          case "generateAppeal": {
+            const body = req.body;
+
+            if (!body.appellantName) {
+              res.status(400).json({
+                success: false,
+                error: "Appellant Name is required for generateAppeal.",
+              });
+              return;
+            }
+
+            const userPrompt = buildAppealPrompt(body);
+
+            let data: {
+              title: string;
+              content: string;
+              groundsOfAppeal: { groundNumber: number; groundText: string }[];
+              keyPoints: string[];
+              warnings: string[];
+            };
+            try {
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, APPEAL_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            } catch (sarvamErr) {
+              console.error("[ai-civil] Sarvam failed for generateAppeal, falling back to Groq:", sarvamErr?.message);
+              try {
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, APPEAL_JSON_STRUCTURE, 0.3);
+              } catch (groqErr) {
+                console.error("[ai-civil] Groq failed for generateAppeal, falling back to Gemini:", groqErr?.message);
+                const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${APPEAL_JSON_STRUCTURE}`;
+                const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+                try { data = parseLLMJSON(geminiResponse); } catch (pe) {
+                  throw new Error("Could not parse Gemini: " + pe?.message);
+                }
+              }
+            }
+
+            logUsage("ai-civil", uid, 3000);
+
+            data = stripMarkdownFromData(data);
+            res.json({ success: true, data });
+            break;
+          }
+
+          // ────────────────────────────────────────────────────────────────────
+          // TASK 9: generateDismiss — Dismissal / Sist Application
+          // ────────────────────────────────────────────────────────────────────
+          case "generateDismiss": {
+            const body = req.body;
+
+            if (!body.applicantName) {
+              res.status(400).json({
+                success: false,
+                error: "Applicant Name is required for generateDismiss.",
+              });
+              return;
+            }
+
+            const userPrompt = buildDismissPrompt(body);
+
+            let data: { title: string; content: string; keyPoints: string[]; warnings: string[]; };
+            try {
+              data = await callSarvamStructured<typeof data>(SYSTEM_PROMPT, userPrompt, DISMISS_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            } catch (sarvamErr) {
+              console.error("[ai-civil] Sarvam failed for generateDismiss, falling back to Groq:", sarvamErr?.message);
+              try {
+                data = await callGroqStructured<typeof data>(SYSTEM_PROMPT, userPrompt, DISMISS_JSON_STRUCTURE, 0.3);
+              } catch (groqErr) {
+                console.error("[ai-civil] Groq failed for generateDismiss, falling back to Gemini:", groqErr?.message);
+                const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${DISMISS_JSON_STRUCTURE}`;
+                const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+                try { data = parseLLMJSON(geminiResponse); } catch (pe) {
+                  throw new Error("Could not parse Gemini: " + pe?.message);
+                }
+              }
+            }
+
+            logUsage("ai-civil", uid, 3000);
 
             data = stripMarkdownFromData(data);
             res.json({ success: true, data });
@@ -882,7 +1368,7 @@ export const apiAiCivil = https.onRequest(
           default: {
             res.status(400).json({
               success: false,
-              error: `Unknown task: "${task}". Valid tasks: generatePlaint, generateWS, generateInjunctionIA, generateWrittenArguments, parseIssues, extractFacts`,
+              error: `Unknown task: "${task}". Valid tasks: generateDocument, generatePlaint, generateWS, generateInjunctionIA, generateWrittenArguments, generateCounter, generateAppeal, generateDismiss, parseIssues, extractFacts`,
             });
           }
         }

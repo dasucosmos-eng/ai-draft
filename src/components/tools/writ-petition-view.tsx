@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-criminal',
   apiTask: 'generateWrit',
   module: 'criminal' as const,
+  requiredFields: ['petitionerName', 'writType'],
   formFields: [
     { key: 'petitionerName', label: 'Petitioner Name', placeholder: 'Name of petitioner', half: true },
     { key: 'respondentName', label: 'Respondent Name', placeholder: 'State / Authority', half: true },

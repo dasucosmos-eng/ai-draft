@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-civil',
   apiTask: 'generatePlaint',
   module: 'civil' as const,
+  requiredFields: ['plaintiffName', 'defendantName'],
   formFields: [
     { key: 'plaintiffName', label: 'Plaintiff Name', placeholder: 'e.g., Mrs. Sunita Sharma', half: true },
     { key: 'plaintiffAddress', label: 'Plaintiff Address', placeholder: 'Full address', half: true },

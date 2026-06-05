@@ -520,6 +520,252 @@ ${marriageDetails?.children?.length ? "8. Children's details and their needs" : 
 ${actUnder === "crpc125" ? "Note: CrPC 125 is a summary proceeding with preponderance of probabilities as the standard. It applies to all religions. Failure to comply is punishable under Sec 126(2). Maximum 1/5th of respondent's income can be attached under Sec 128." : "Note: HAMA Sec 18-22 provides additional maintenance provisions specifically for Hindus. Can be claimed simultaneously with CrPC 125 but amounts are set off."}`;
     return prompt;
 }
+// ─── Flat-to-Nested Adapter Helpers ──────────────────────────────────────────
+// These helpers normalize incoming flat field names (as sent from the frontend)
+// into the nested objects expected by the prompt builders.
+function adaptDivorceInput(body) {
+    return {
+        divorceType: body.divorceType || body.petitionType || 'contested',
+        petitionerDetails: body.petitionerDetails || {
+            name: body.petitionerName || '',
+            gender: body.petitionerGender || '',
+            address: body.petitionerAddress || '',
+            religion: body.petitionerReligion || 'Hindu',
+            occupation: body.petitionerOccupation || '',
+            income: body.petitionerIncome || '',
+        },
+        respondentDetails: body.respondentDetails || {
+            name: body.respondentName || '',
+            gender: body.respondentGender || '',
+            address: body.respondentAddress || '',
+            religion: body.respondentReligion || 'Hindu',
+            occupation: body.respondentOccupation || '',
+            income: body.respondentIncome || '',
+        },
+        marriageDetails: body.marriageDetails || {
+            dateOfMarriage: body.marriageDate || '',
+            placeOfMarriage: body.marriagePlace || '',
+            children: body.children
+                ? (Array.isArray(body.children)
+                    ? body.children
+                    : typeof body.children === 'string'
+                        ? body.children.split(',').map((c) => ({ name: c.trim(), age: '', gender: '' }))
+                        : [])
+                : [],
+        },
+        grounds: body.grounds || body.groundsForDivorce || [],
+        underSection: body.underSection || '13(1)(ia)',
+        waiverCoolingPeriod: body.waiverCoolingPeriod || false,
+    };
+}
+function adaptDOPInput(body) {
+    return {
+        applicationType: body.applicationType || body.reliefType || 'protection',
+        applicantDetails: body.applicantDetails || {
+            name: body.applicantName || body.petitionerName || '',
+            gender: body.applicantGender || body.petitionerGender || 'Female',
+            age: body.applicantAge || body.petitionerAge || '',
+            address: body.applicantAddress || body.petitionerAddress || '',
+            occupation: body.applicantOccupation || body.petitionerOccupation || '',
+            income: body.applicantIncome || body.petitionerIncome || '',
+        },
+        respondentDetails: body.respondentDetails || {
+            name: body.respondentName || '',
+            gender: body.respondentGender || 'Male',
+            address: body.respondentAddress || '',
+            relation: body.respondentRelation || body.relationship || 'Husband',
+            occupation: body.respondentOccupation || '',
+            income: body.respondentIncome || '',
+        },
+        domesticViolenceDetails: body.domesticViolenceDetails || {
+            incidents: body.incidents || body.domesticViolenceIncidents || [],
+            children: body.children || body.dvChildren || [],
+            reliefSought: body.reliefSought || body.dvReliefSought || [],
+        },
+    };
+}
+function adaptMVOPInput(body) {
+    return {
+        claimType: body.claimType || body.claimTypeMvop || 'compensation',
+        claimantDetails: body.claimantDetails || {
+            name: body.claimantName || body.petitionerName || '',
+            age: body.claimantAge || body.petitionerAge || '',
+            address: body.claimantAddress || body.petitionerAddress || '',
+            occupation: body.claimantOccupation || body.petitionerOccupation || '',
+            monthlyIncome: body.claimantMonthlyIncome || body.petitionerIncome || '',
+        },
+        vehicleDetails: body.vehicleDetails || {
+            type: body.vehicleType || '',
+            registrationNumber: body.vehicleRegistrationNumber || '',
+            insuranceCompany: body.insuranceCompany || '',
+            insurancePolicyNumber: body.insurancePolicyNumber || '',
+        },
+        accidentDetails: body.accidentDetails || {
+            date: body.accidentDate || '',
+            time: body.accidentTime || '',
+            place: body.accidentPlace || '',
+            policeStation: body.policeStation || '',
+            firNumber: body.firNumber || '',
+        },
+        injuryDetails: body.injuryDetails || {
+            nature: body.injuryNature || body.natureOfInjury || '',
+            disabilityPercentage: body.disabilityPercentage || '',
+            hospitalizationDays: body.hospitalizationDays || '',
+            medicalExpenses: body.medicalExpenses || '',
+        },
+        respondentDetails: body.respondentDetails || {
+            name: body.respondentName || '',
+            address: body.respondentAddress || '',
+        },
+        deceased: body.deceased || (body.deceasedName ? {
+            name: body.deceasedName,
+            age: body.deceasedAge || '',
+            income: body.deceasedIncome || '',
+            dependents: body.deceasedDependents || '',
+        } : undefined),
+    };
+}
+function adaptSuccessionInput(body) {
+    return {
+        petitionType: body.petitionType || body.succPetitionType || 'succession_certificate',
+        deceasedDetails: body.deceasedDetails || {
+            name: body.deceasedName || '',
+            age: body.deceasedAge || '',
+            dateOfDeath: body.dateOfDeath || '',
+            placeOfDeath: body.placeOfDeath || '',
+            religion: body.deceasedReligion || 'Hindu',
+            lastAddress: body.deceasedLastAddress || body.deceasedAddress || '',
+        },
+        propertyDetails: body.propertyDetails || {
+            type: body.propertyType || 'movable',
+            description: body.propertyDescription || '',
+            estimatedValue: body.propertyEstimatedValue || body.propertyValue || '',
+            debts: body.propertyDebts || 'None',
+        },
+        legalHeirs: body.legalHeirs || body.heirs || [],
+        personalLaw: body.personalLaw || 'hindu',
+        willExists: body.willExists || body.hasWill || false,
+    };
+}
+function adaptGuardianInput(body) {
+    return {
+        petitionType: body.petitionType || body.guardianPetitionType || 'guardianship',
+        minorDetails: body.minorDetails || {
+            name: body.minorName || '',
+            age: body.minorAge || '',
+            gender: body.minorGender || '',
+            address: body.minorAddress || '',
+        },
+        parentDetails: body.parentDetails || body.parents || [],
+        applicantDetails: body.applicantDetails || {
+            name: body.applicantName || body.petitionerName || '',
+            address: body.applicantAddress || body.petitionerAddress || '',
+            relation: body.applicantRelation || body.relationToMinor || '',
+            income: body.applicantIncome || body.petitionerIncome || '',
+            grounds: body.applicantGrounds || body.grounds || '',
+        },
+    };
+}
+function adaptMaintenanceInput(body) {
+    return {
+        actUnder: body.actUnder || body.maintenanceAct || 'crpc125',
+        applicantDetails: body.applicantDetails || {
+            name: body.applicantName || body.petitionerName || '',
+            gender: body.applicantGender || body.petitionerGender || 'Female',
+            age: body.applicantAge || body.petitionerAge || '',
+            address: body.applicantAddress || body.petitionerAddress || '',
+            occupation: body.applicantOccupation || body.petitionerOccupation || '',
+            income: body.applicantIncome || body.petitionerIncome || '',
+        },
+        respondentDetails: body.respondentDetails || {
+            name: body.respondentName || '',
+            gender: body.respondentGender || 'Male',
+            address: body.respondentAddress || '',
+            occupation: body.respondentOccupation || '',
+            income: body.respondentIncome || '',
+        },
+        marriageDetails: body.marriageDetails || {
+            dateOfMarriage: body.marriageDate || '',
+            separationDate: body.separationDate || '',
+            children: body.children
+                ? (Array.isArray(body.children)
+                    ? body.children
+                    : typeof body.children === 'string'
+                        ? body.children.split(',').map((c) => ({ name: c.trim(), age: '', custody: '' }))
+                        : [])
+                : [],
+        },
+        grounds: body.grounds || body.groundsForMaintenance || [],
+        amountClaimed: body.amountClaimed || body.amount || '',
+    };
+}
+// ─── Auto-detect document type for generateDocument ──────────────────────────
+function detectDocumentType(body) {
+    // 1. Explicit documentType field
+    const dt = (body.documentType || '').toLowerCase().trim();
+    const typeMap = {
+        divorce: 'generateDivorce',
+        hmop: 'generateDivorce',
+        'mutual-consent': 'generateDivorce',
+        mutual_consent: 'generateDivorce',
+        contested_divorce: 'generateDivorce',
+        dop: 'generateDOP',
+        domestic_violence: 'generateDOP',
+        pwdva: 'generateDOP',
+        protection_order: 'generateDOP',
+        mvop: 'generateMVOP',
+        motor_accident: 'generateMVOP',
+        motor_vehicle: 'generateMVOP',
+        compensation_claim: 'generateMVOP',
+        succession: 'generateSuccession',
+        probate: 'generateSuccession',
+        legal_heir: 'generateSuccession',
+        succession_certificate: 'generateSuccession',
+        guardian: 'generateGuardian',
+        guardianship: 'generateGuardian',
+        custody: 'generateGuardian',
+        maintenance: 'generateMaintenance',
+        crpc125: 'generateMaintenance',
+        hama: 'generateMaintenance',
+        alimony: 'generateMaintenance',
+    };
+    if (dt && typeMap[dt])
+        return typeMap[dt];
+    // 2. Heuristic from field presence
+    if (body.divorceType || body.petitionType === 'mutual_consent' || body.petitionType === 'contested' || body.marriageDate || body.marriagePlace)
+        return 'generateDivorce';
+    if (body.applicationType && ['protection', 'residence', 'monetary', 'custody', 'compensation'].includes(body.applicationType))
+        return 'generateDOP';
+    if (body.incidents || body.domesticViolenceIncidents)
+        return 'generateDOP';
+    if (body.claimType && ['compensation', 'interim'].includes(body.claimType))
+        return 'generateMVOP';
+    if (body.vehicleType || body.vehicleRegistrationNumber || body.accidentDate || body.firNumber)
+        return 'generateMVOP';
+    if (body.injuryNature || body.natureOfInjury)
+        return 'generateMVOP';
+    if (body.deceasedName && body.deceasedAge && (body.propertyType || body.propertyDescription))
+        return 'generateMVOP';
+    if (body.deceasedName && (body.dateOfDeath || body.propertyType))
+        return 'generateSuccession';
+    if (body.petitionType && ['succession_certificate', 'probate', 'legal_heir'].includes(body.petitionType))
+        return 'generateSuccession';
+    if (body.willExists !== undefined || body.hasWill !== undefined)
+        return 'generateSuccession';
+    if (body.minorName || body.minorDetails)
+        return 'generateGuardian';
+    if (body.petitionType && ['guardianship', 'variation', 'removal'].includes(body.petitionType))
+        return 'generateGuardian';
+    if (body.actUnder && ['crpc125', 'hama'].includes(body.actUnder))
+        return 'generateMaintenance';
+    if (body.amountClaimed || body.amount)
+        return 'generateMaintenance';
+    if (body.groundsForMaintenance)
+        return 'generateMaintenance';
+    if (body.separationDate)
+        return 'generateMaintenance';
+    return null;
+}
 // ─── Main Cloud Function ───────────────────────────────────────────────────────
 exports.apiAiFamily = v2_1.https.onRequest({
     timeoutSeconds: 180,
@@ -549,17 +795,46 @@ exports.apiAiFamily = v2_1.https.onRequest({
             if (!task) {
                 res.status(400).json({
                     success: false,
-                    error: "task is required. Valid tasks: generateDivorce, generateDOP, generateMVOP, generateSuccession, generateGuardian, generateMaintenance",
+                    error: "task is required. Valid tasks: generateDivorce, generateDOP, generateMVOP, generateSuccession, generateGuardian, generateMaintenance, generateDocument",
                 });
                 return;
             }
             console.log(`[ai-family] Task: ${task}`);
             switch (task) {
                 // ────────────────────────────────────────────────────────────────────
+                // TASK 0: generateDocument (auto-detect and route)
+                // ────────────────────────────────────────────────────────────────────
+                case "generateDocument": {
+                    const detectedTask = detectDocumentType(req.body);
+                    if (!detectedTask) {
+                        res.status(400).json({
+                            success: false,
+                            error: `Could not auto-detect document type. Please provide a 'documentType' field or enough identifying fields. Supported types: divorce, dop, mvop, succession, guardian, maintenance.`,
+                        });
+                        return;
+                    }
+                    console.log(`[ai-family] generateDocument auto-detected task: ${detectedTask}`);
+                    // Build the adapted body and route to the appropriate handler
+                    // We set the task on the body and fall through by re-dispatching
+                    const adaptedBody = { ...req.body, task: detectedTask };
+                    req.body = adaptedBody;
+                    // Re-dispatch to the correct handler by continuing the switch
+                    // We use a simple dispatch approach here
+                    const handlerResult = await dispatchTask(detectedTask, adaptedBody);
+                    if (handlerResult.error) {
+                        res.status(handlerResult.status || 500).json(handlerResult);
+                        return;
+                    }
+                    res.json(handlerResult);
+                    break;
+                }
+                // ────────────────────────────────────────────────────────────────────
                 // TASK 1: generateDivorce
                 // ────────────────────────────────────────────────────────────────────
                 case "generateDivorce": {
-                    const { divorceType, petitionerDetails, respondentDetails, marriageDetails, grounds, underSection, waiverCoolingPeriod } = req.body;
+                    // Accept BOTH nested and flat formats via adapter
+                    const adapted = adaptDivorceInput(req.body);
+                    const { divorceType, petitionerDetails, respondentDetails, marriageDetails, grounds, underSection, waiverCoolingPeriod } = adapted;
                     if (!divorceType || !petitionerDetails || !respondentDetails || !marriageDetails) {
                         res.status(400).json({
                             success: false,
@@ -574,7 +849,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildDivorcePrompt(req.body);
+                    const userPrompt = buildDivorcePrompt(adapted);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, DIVORCE_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -605,7 +880,9 @@ exports.apiAiFamily = v2_1.https.onRequest({
                 // TASK 2: generateDOP
                 // ────────────────────────────────────────────────────────────────────
                 case "generateDOP": {
-                    const { applicationType, applicantDetails, respondentDetails, domesticViolenceDetails } = req.body;
+                    // Accept BOTH nested and flat formats via adapter
+                    const adapted = adaptDOPInput(req.body);
+                    const { applicationType, applicantDetails, respondentDetails, domesticViolenceDetails } = adapted;
                     if (!applicationType || !applicantDetails || !respondentDetails) {
                         res.status(400).json({
                             success: false,
@@ -621,7 +898,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildDOPPrompt(req.body);
+                    const userPrompt = buildDOPPrompt(adapted);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, DOP_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -652,7 +929,9 @@ exports.apiAiFamily = v2_1.https.onRequest({
                 // TASK 3: generateMVOP
                 // ────────────────────────────────────────────────────────────────────
                 case "generateMVOP": {
-                    const { claimType, claimantDetails, vehicleDetails, accidentDetails, injuryDetails, respondentDetails } = req.body;
+                    // Accept BOTH nested and flat formats via adapter
+                    const adapted = adaptMVOPInput(req.body);
+                    const { claimType, claimantDetails, vehicleDetails, accidentDetails, injuryDetails, respondentDetails } = adapted;
                     if (!claimType || !claimantDetails || !vehicleDetails || !accidentDetails || !injuryDetails) {
                         res.status(400).json({
                             success: false,
@@ -667,7 +946,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildMVOPPrompt(req.body);
+                    const userPrompt = buildMVOPPrompt(adapted);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, MVOP_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
@@ -698,7 +977,9 @@ exports.apiAiFamily = v2_1.https.onRequest({
                 // TASK 4: generateSuccession
                 // ────────────────────────────────────────────────────────────────────
                 case "generateSuccession": {
-                    const { petitionType, deceasedDetails, propertyDetails, legalHeirs, personalLaw, willExists } = req.body;
+                    // Accept BOTH nested and flat formats via adapter
+                    const adapted = adaptSuccessionInput(req.body);
+                    const { petitionType, deceasedDetails, propertyDetails, legalHeirs, personalLaw, willExists } = adapted;
                     if (!petitionType || !deceasedDetails || !propertyDetails || !legalHeirs || !personalLaw) {
                         res.status(400).json({
                             success: false,
@@ -722,7 +1003,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildSuccessionPrompt(req.body);
+                    const userPrompt = buildSuccessionPrompt(adapted);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, SUCCESSION_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -753,7 +1034,9 @@ exports.apiAiFamily = v2_1.https.onRequest({
                 // TASK 5: generateGuardian
                 // ────────────────────────────────────────────────────────────────────
                 case "generateGuardian": {
-                    const { petitionType, minorDetails, parentDetails, applicantDetails } = req.body;
+                    // Accept BOTH nested and flat formats via adapter
+                    const adapted = adaptGuardianInput(req.body);
+                    const { petitionType, minorDetails, applicantDetails } = adapted;
                     if (!petitionType || !minorDetails || !applicantDetails) {
                         res.status(400).json({
                             success: false,
@@ -769,7 +1052,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildGuardianPrompt(req.body);
+                    const userPrompt = buildGuardianPrompt(adapted);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, GUARDIAN_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -800,7 +1083,9 @@ exports.apiAiFamily = v2_1.https.onRequest({
                 // TASK 6: generateMaintenance
                 // ────────────────────────────────────────────────────────────────────
                 case "generateMaintenance": {
-                    const { actUnder, applicantDetails, respondentDetails, marriageDetails, grounds, amountClaimed } = req.body;
+                    // Accept BOTH nested and flat formats via adapter
+                    const adapted = adaptMaintenanceInput(req.body);
+                    const { actUnder, applicantDetails, respondentDetails, marriageDetails, grounds, amountClaimed } = adapted;
                     if (!actUnder || !applicantDetails || !respondentDetails) {
                         res.status(400).json({
                             success: false,
@@ -815,7 +1100,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildMaintenancePrompt(req.body);
+                    const userPrompt = buildMaintenancePrompt(adapted);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, MAINTENANCE_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -848,7 +1133,7 @@ exports.apiAiFamily = v2_1.https.onRequest({
                 default: {
                     res.status(400).json({
                         success: false,
-                        error: `Unknown task: "${task}". Valid tasks: generateDivorce, generateDOP, generateMVOP, generateSuccession, generateGuardian, generateMaintenance`,
+                        error: `Unknown task: "${task}". Valid tasks: generateDivorce, generateDOP, generateMVOP, generateSuccession, generateGuardian, generateMaintenance, generateDocument`,
                     });
                 }
             }
@@ -863,3 +1148,212 @@ exports.apiAiFamily = v2_1.https.onRequest({
         }
     });
 });
+// ─── Dispatch helper for generateDocument routing ────────────────────────────
+// This function mirrors the switch-case logic above so that generateDocument
+// can route to the correct handler after auto-detection.
+async function dispatchTask(task, body) {
+    let adapted;
+    switch (task) {
+        case "generateDivorce": {
+            adapted = adaptDivorceInput(body);
+            if (!adapted.divorceType || !adapted.petitionerDetails || !adapted.respondentDetails || !adapted.marriageDetails) {
+                return { success: false, error: "divorceType, petitionerDetails, respondentDetails, and marriageDetails are required.", status: 400 };
+            }
+            if (!["contested", "mutual_consent"].includes(adapted.divorceType)) {
+                return { success: false, error: "divorceType must be 'contested' or 'mutual_consent'.", status: 400 };
+            }
+            const userPrompt = buildDivorcePrompt(adapted);
+            let data;
+            try {
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, DIVORCE_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            }
+            catch (sarvamErr) {
+                try {
+                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, DIVORCE_JSON_STRUCTURE, 0.3);
+                }
+                catch (groqErr) {
+                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${DIVORCE_JSON_STRUCTURE}`;
+                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                    try {
+                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                    }
+                    catch (pe) {
+                        throw new Error("Could not parse Gemini: " + pe?.message);
+                    }
+                }
+            }
+            (0, groq_client_1.logUsage)("ai-family", undefined, 3000);
+            data = (0, utils_1.stripMarkdownFromData)(data);
+            return { success: true, data };
+        }
+        case "generateDOP": {
+            adapted = adaptDOPInput(body);
+            if (!adapted.applicationType || !adapted.applicantDetails || !adapted.respondentDetails) {
+                return { success: false, error: "applicationType, applicantDetails, and respondentDetails are required.", status: 400 };
+            }
+            const validTypes = ["protection", "residence", "monetary", "custody", "compensation"];
+            if (!validTypes.includes(adapted.applicationType)) {
+                return { success: false, error: `applicationType must be one of: ${validTypes.join(", ")}.`, status: 400 };
+            }
+            const userPrompt = buildDOPPrompt(adapted);
+            let data;
+            try {
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, DOP_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            }
+            catch (sarvamErr) {
+                try {
+                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, DOP_JSON_STRUCTURE, 0.3);
+                }
+                catch (groqErr) {
+                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${DOP_JSON_STRUCTURE}`;
+                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                    try {
+                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                    }
+                    catch (pe) {
+                        throw new Error("Could not parse Gemini: " + pe?.message);
+                    }
+                }
+            }
+            (0, groq_client_1.logUsage)("ai-family", undefined, 3000);
+            data = (0, utils_1.stripMarkdownFromData)(data);
+            return { success: true, data };
+        }
+        case "generateMVOP": {
+            adapted = adaptMVOPInput(body);
+            if (!adapted.claimType || !adapted.claimantDetails || !adapted.vehicleDetails || !adapted.accidentDetails || !adapted.injuryDetails) {
+                return { success: false, error: "claimType, claimantDetails, vehicleDetails, accidentDetails, and injuryDetails are required.", status: 400 };
+            }
+            if (!["compensation", "interim"].includes(adapted.claimType)) {
+                return { success: false, error: "claimType must be 'compensation' or 'interim'.", status: 400 };
+            }
+            const userPrompt = buildMVOPPrompt(adapted);
+            let data;
+            try {
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, MVOP_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
+            }
+            catch (sarvamErr) {
+                try {
+                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, MVOP_JSON_STRUCTURE, 0.3);
+                }
+                catch (groqErr) {
+                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${MVOP_JSON_STRUCTURE}`;
+                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                    try {
+                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                    }
+                    catch (pe) {
+                        throw new Error("Could not parse Gemini: " + pe?.message);
+                    }
+                }
+            }
+            (0, groq_client_1.logUsage)("ai-family", undefined, 3000);
+            data = (0, utils_1.stripMarkdownFromData)(data);
+            return { success: true, data };
+        }
+        case "generateSuccession": {
+            adapted = adaptSuccessionInput(body);
+            if (!adapted.petitionType || !adapted.deceasedDetails || !adapted.propertyDetails || !adapted.legalHeirs || !adapted.personalLaw) {
+                return { success: false, error: "petitionType, deceasedDetails, propertyDetails, legalHeirs, and personalLaw are required.", status: 400 };
+            }
+            const validTypes = ["succession_certificate", "probate", "legal_heir"];
+            if (!validTypes.includes(adapted.petitionType)) {
+                return { success: false, error: `petitionType must be one of: ${validTypes.join(", ")}.`, status: 400 };
+            }
+            const validPersonalLaws = ["hindu", "muslim", "christian", "parsi", "other"];
+            if (!validPersonalLaws.includes(adapted.personalLaw)) {
+                return { success: false, error: `personalLaw must be one of: ${validPersonalLaws.join(", ")}.`, status: 400 };
+            }
+            const userPrompt = buildSuccessionPrompt(adapted);
+            let data;
+            try {
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, SUCCESSION_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            }
+            catch (sarvamErr) {
+                try {
+                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, SUCCESSION_JSON_STRUCTURE, 0.3);
+                }
+                catch (groqErr) {
+                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${SUCCESSION_JSON_STRUCTURE}`;
+                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                    try {
+                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                    }
+                    catch (pe) {
+                        throw new Error("Could not parse Gemini: " + pe?.message);
+                    }
+                }
+            }
+            (0, groq_client_1.logUsage)("ai-family", undefined, 3000);
+            data = (0, utils_1.stripMarkdownFromData)(data);
+            return { success: true, data };
+        }
+        case "generateGuardian": {
+            adapted = adaptGuardianInput(body);
+            if (!adapted.petitionType || !adapted.minorDetails || !adapted.applicantDetails) {
+                return { success: false, error: "petitionType, minorDetails, and applicantDetails are required.", status: 400 };
+            }
+            const validTypes = ["guardianship", "variation", "removal"];
+            if (!validTypes.includes(adapted.petitionType)) {
+                return { success: false, error: `petitionType must be one of: ${validTypes.join(", ")}.`, status: 400 };
+            }
+            const userPrompt = buildGuardianPrompt(adapted);
+            let data;
+            try {
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, GUARDIAN_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            }
+            catch (sarvamErr) {
+                try {
+                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, GUARDIAN_JSON_STRUCTURE, 0.3);
+                }
+                catch (groqErr) {
+                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${GUARDIAN_JSON_STRUCTURE}`;
+                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                    try {
+                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                    }
+                    catch (pe) {
+                        throw new Error("Could not parse Gemini: " + pe?.message);
+                    }
+                }
+            }
+            (0, groq_client_1.logUsage)("ai-family", undefined, 3000);
+            data = (0, utils_1.stripMarkdownFromData)(data);
+            return { success: true, data };
+        }
+        case "generateMaintenance": {
+            adapted = adaptMaintenanceInput(body);
+            if (!adapted.actUnder || !adapted.applicantDetails || !adapted.respondentDetails) {
+                return { success: false, error: "actUnder, applicantDetails, and respondentDetails are required.", status: 400 };
+            }
+            if (!["crpc125", "hama"].includes(adapted.actUnder)) {
+                return { success: false, error: "actUnder must be 'crpc125' or 'hama'.", status: 400 };
+            }
+            const userPrompt = buildMaintenancePrompt(adapted);
+            let data;
+            try {
+                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, MAINTENANCE_JSON_STRUCTURE, 0.3, "sarvam-105b");
+            }
+            catch (sarvamErr) {
+                try {
+                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, MAINTENANCE_JSON_STRUCTURE, 0.3);
+                }
+                catch (groqErr) {
+                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${MAINTENANCE_JSON_STRUCTURE}`;
+                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                    try {
+                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                    }
+                    catch (pe) {
+                        throw new Error("Could not parse Gemini: " + pe?.message);
+                    }
+                }
+            }
+            (0, groq_client_1.logUsage)("ai-family", undefined, 3000);
+            data = (0, utils_1.stripMarkdownFromData)(data);
+            return { success: true, data };
+        }
+        default:
+            return { success: false, error: `Unknown task: "${task}".`, status: 400 };
+    }
+}

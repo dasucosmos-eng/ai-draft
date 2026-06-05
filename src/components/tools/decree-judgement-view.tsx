@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-execution',
   apiTask: 'parseDecree',
   module: 'execution' as const,
+  requiredFields: ['decreeText'],
   formFields: [
     { key: 'decreeText', label: 'Decree/Judgment Text', placeholder: 'Paste the full text of the decree or judgment here for AI analysis...', type: 'textarea' as const },
     { key: 'courtName', label: 'Court Name', placeholder: 'Name of the court', half: true },

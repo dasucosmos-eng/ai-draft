@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-criminal',
   apiTask: 'generateBail',
   module: 'criminal' as const,
+  requiredFields: ['applicantName', 'firNumber'],
   formFields: [
     { key: 'applicantName', label: 'Applicant Name', placeholder: 'Name of accused', half: true },
     { key: 'age', label: 'Age', placeholder: 'Age of accused', half: true },

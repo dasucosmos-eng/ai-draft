@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-civil',
   apiTask: 'parseIssues',
   module: 'civil' as const,
+  requiredFields: ['orderText'],
   formFields: [
     { key: 'orderText', label: 'Order Text', placeholder: 'Paste the full text of the court order here...', type: 'textarea' as const },
     { key: 'courtName', label: 'Court Name', placeholder: 'Name of the court', half: true },

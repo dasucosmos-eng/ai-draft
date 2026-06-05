@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-family',
   apiTask: 'generateDOP',
   module: 'family' as const,
+  requiredFields: ['complainantName', 'respondentName'],
   formFields: [
     { key: 'complainantName', label: 'Complainant Name', placeholder: 'Aggrieved person', half: true },
     { key: 'respondentName', label: 'Respondent Name', placeholder: 'Respondent (husband / relative)', half: true },

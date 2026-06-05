@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-family',
   apiTask: 'generateGuardian',
   module: 'family' as const,
+  requiredFields: ['petitionerName', 'minorName'],
   formFields: [
     { key: 'petitionerName', label: 'Petitioner Name', placeholder: 'Person seeking guardianship', half: true },
     { key: 'minorName', label: 'Minor Name', placeholder: 'Name of the minor child', half: true },

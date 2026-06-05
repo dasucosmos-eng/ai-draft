@@ -177,6 +177,110 @@ Top 3-4 risks with mitigation from case law.
 - Procedural Advantage: (percentage)
 
 Use Indian legal context. Be specific.`,
+
+  // Aliases added for frontend compatibility
+  "case-search": `You are an expert Indian legal researcher. Search for and analyze relevant case law, statutes, and legal precedents based on the query.
+
+CRITICAL: You MUST cite specific cases from the case law provided.
+
+## Relevant Case Law
+For each case found:
+1. Case name and citation
+2. Court and year
+3. Key holdings relevant to the query
+4. How it applies to the user's situation
+
+## Statutory Provisions
+List all relevant sections and acts.
+
+## Legal Analysis
+Provide a thorough analysis of how the law applies.
+
+## Suggested Arguments
+Based on the case law, suggest the strongest arguments.
+
+Use proper Indian legal formatting. Be thorough.`,
+
+  "legal-analysis": `You are an expert Indian litigation lawyer specializing in comprehensive legal analysis. Analyze the legal issue AND the real case law provided.
+
+CRITICAL: Cite specific cases from the case law provided.
+
+## Issue Identification
+Identify all legal issues (questions of law, questions of fact, mixed).
+
+## Legal Analysis
+For each issue:
+1. Applicable statutory provisions
+2. Relevant case law from the provided citations
+3. How courts have interpreted similar cases
+
+## Strengths and Weaknesses
+Assess the legal position objectively.
+
+## Recommended Approach
+Suggest the best legal strategy.
+
+Use proper Indian legal formatting. Be specific with provisions and case citations.`,
+
+  "argument-analyzer": `You are an expert Indian litigation lawyer specializing in analyzing legal arguments. Analyze the arguments provided AND the real case law.
+
+CRITICAL: Cite specific cases from the case law provided.
+
+## Argument Breakdown
+Analyze each argument for:
+1. Legal merit
+2. Factual basis
+3. Precedent support
+
+## Strengths
+Identify the strongest points with case law backing.
+
+## Weaknesses
+Identify vulnerabilities the opposing side could exploit.
+
+## Counter-Arguments
+For each weakness, provide a rebuttal supported by case law.
+
+## Recommended Improvements
+Suggest how to strengthen the arguments.
+
+Use proper Indian legal formatting. Be thorough.`,
+
+  "defense-builder": `You are an expert Indian criminal defense lawyer. Build a comprehensive defense strategy based on the prosecution's case AND the real case law provided.
+
+CRITICAL: Cite specific cases from the case law provided.
+
+## Defense Theory
+State the core defense theory clearly.
+
+## Element-wise Rebuttal
+For each element the prosecution must prove:
+1. What prosecution alleges
+2. Defense rebuttal with evidence
+3. Case law support for the defense position
+
+## Procedural Defenses
+Any procedural irregularities (Section 167/169 CrPC, Section 313 CrPC, etc.)
+
+## Pre-trial Motions
+Bail, discharge under Section 227/239 CrPC, etc.
+
+## Key Precedents for Defense
+List the strongest defense-supporting cases.
+
+## Cross-Examination Strategy
+Key witnesses to cross-examine and suggested questions.
+
+Use proper Indian legal formatting. Be specific with IPC/BNSS sections.`,
+};
+
+// ─── Alias mapping for frontend compatibility ───
+const TOOL_TYPE_ALIASES: Record<string, string> = {
+  "case-search": "argument-builder",
+  "legal-analysis": "argument-builder",
+  "argument-analyzer": "argument-builder",
+  "defense-builder": "argument-builder",
+  "strategy": "strategy-simulator",
 };
 
 // ─── Extract legal search terms from user input ───
@@ -184,10 +288,20 @@ Use Indian legal context. Be specific.`,
 function extractSearchTerms(toolType: string, input: Record<string, any>): string {
   const parts: string[] = [];
 
+  // Universal fallback: accept input.query from frontend
+  if (input.query) parts.push(input.query);
+
   switch (toolType) {
-    case "argument-builder": {
+    case "argument-builder":
+    case "argument-analyzer":
+    case "defense-builder":
+    case "case-search":
+    case "legal-analysis": {
       if (input.caseDetails) parts.push(input.caseDetails);
       if (input.petition) parts.push(input.petition);
+      if (input.prosecutionCase) parts.push(input.prosecutionCase);
+      if (input.facts) parts.push(input.facts);
+      if (input.grounds) parts.push(input.grounds);
       break;
     }
     case "injunction-generator": {
@@ -207,7 +321,8 @@ function extractSearchTerms(toolType: string, input: Record<string, any>): strin
       if (input.notes) parts.push(input.notes);
       break;
     }
-    case "strategy-simulator": {
+    case "strategy-simulator":
+    case "strategy": {
       if (input.caseDetails) parts.push(input.caseDetails);
       if (input.opponentStrategy) parts.push(input.opponentStrategy);
       break;
@@ -293,18 +408,37 @@ export const apiAiLitigation = https.onRequest(
         return;
       }
       try {
-        const { toolType, caseDetails, petition, grounds, caseInfo, statement, notes, opponentStrategy, caseType } = req.body;
+        // Accept both toolType and task (frontend DraftingView sends 'task')
+        const { toolType: rawToolType, task, caseDetails, petition, grounds, caseInfo, statement, notes, opponentStrategy, caseType, input: nestedInput, query, prosecutionCase, facts, sectionsCharged, firNumber, accusedName, courtName } = req.body;
 
-        if (!toolType || !TOOL_PROMPTS[toolType]) {
+        const toolType = rawToolType || task || "";
+        if (!toolType) {
           res.status(400).json({
-            error: "Valid toolType is required",
+            error: "Valid toolType or task is required",
             validTools: Object.keys(TOOL_PROMPTS),
           });
           return;
         }
 
-        const input = { caseDetails, petition, grounds, caseInfo, statement, notes, opponentStrategy, caseType };
-        const searchQuery = extractSearchTerms(toolType, input);
+        // Resolve aliases
+        const resolvedToolType = TOOL_PROMPTS[toolType] ? toolType : (TOOL_TYPE_ALIASES[toolType] || null);
+        const effectiveToolType = resolvedToolType || toolType;
+
+        if (!TOOL_PROMPTS[effectiveToolType]) {
+          res.status(400).json({
+            error: `Unknown toolType: "${toolType}"`,
+            validTools: Object.keys(TOOL_PROMPTS),
+          });
+          return;
+        }
+
+        // Merge all input fields — accept both flat and nested input structures
+        const input: Record<string, any> = {
+          caseDetails, petition, grounds, caseInfo, statement, notes, opponentStrategy, caseType,
+          query, prosecutionCase, facts, sectionsCharged, firNumber, accusedName, courtName,
+          ...(nestedInput || {}), // Unwrap nested input object from aiLitigation() calls
+        };
+        const searchQuery = extractSearchTerms(effectiveToolType, input);
 
         console.log(`[ai-litigation] Tool: ${toolType} | Search: "${searchQuery?.substring(0, 80)}..."`);
 
@@ -342,24 +476,24 @@ export const apiAiLitigation = https.onRequest(
         // Build the user message with case law context
         let userMessage = "";
 
-        switch (toolType) {
+        switch (effectiveToolType) {
           case "argument-builder":
-            userMessage = `Case Details:\n${caseDetails || ""}\n${petition ? `\nPetition/Reply/FIR Content:\n${petition}` : ""}`;
+            userMessage = `Case Details:\n${caseDetails || prosecutionCase || query || ""}\n${petition ? `\nPetition/Reply/FIR Content:\n${petition}` : ""}\n${facts ? `\nDefense Facts:\n${facts}` : ""}\n${grounds ? `\nLegal Grounds:\n${grounds}` : ""}\n${sectionsCharged ? `\nSections Charged: ${sectionsCharged}` : ""}\n${accusedName ? `\nAccused: ${accusedName}` : ""}\n${firNumber ? `\nFIR: ${firNumber}` : ""}\n${courtName ? `\nCourt: ${courtName}` : ""}`;
             break;
           case "injunction-generator":
             userMessage = `Type of Relief: ${caseType || ""}\nGrounds: ${grounds || ""}`;
             break;
           case "hearing-prep":
-            userMessage = `Case Information:\n${caseInfo || ""}`;
+            userMessage = `Case Information:\n${caseInfo || query || ""}`;
             break;
           case "cross-examination":
-            userMessage = `Witness Statement:\n${statement || ""}`;
+            userMessage = `Witness Statement:\n${statement || query || ""}`;
             break;
           case "courtroom-notes":
-            userMessage = `Raw Hearing Notes:\n${notes || ""}`;
+            userMessage = `Raw Hearing Notes:\n${notes || query || ""}`;
             break;
           case "strategy-simulator":
-            userMessage = `Case Details:\n${caseDetails || ""}\n\nOpponent's Strategy:\n${opponentStrategy || "Not specified"}`;
+            userMessage = `Case Details:\n${caseDetails || query || ""}\n\nOpponent's Strategy:\n${opponentStrategy || "Not specified"}`;
             break;
         }
 
@@ -367,7 +501,7 @@ export const apiAiLitigation = https.onRequest(
           userMessage += `\n\n---\n\nRELEVANT CASE LAW (use these as citations in your response):\n\n${caseLawContext}`;
         }
 
-        const systemPrompt = TOOL_PROMPTS[toolType];
+        const systemPrompt = TOOL_PROMPTS[effectiveToolType];
 
         let responseText: string;
         try {
@@ -399,7 +533,7 @@ export const apiAiLitigation = https.onRequest(
 
         // Extract CASE_STRENGTH for strategy simulator
         let caseStrength: number | null = null;
-        if (toolType === "strategy-simulator") {
+        if (effectiveToolType === "strategy-simulator") {
           const strengthMatch = responseText.match(/CASE_STRENGTH:\s*(\d+)/);
           if (strengthMatch) {
             caseStrength = Math.min(95, Math.max(20, parseInt(strengthMatch[1], 10)));
@@ -407,9 +541,9 @@ export const apiAiLitigation = https.onRequest(
           }
         }
 
-        logUsage("ai-litigation", undefined, 3000);
+        logUsage("ai-litigation", uid, 3000);
 
-        console.log(`[ai-litigation] Success: tool=${toolType}, citations=${citations.length}, sources=[${sources.join(",")}]`);
+        console.log(`[ai-litigation] Success: tool=${effectiveToolType} (requested: ${toolType}), citations=${citations.length}, sources=[${sources.join(",")}]`);
 
         res.json({
           success: true,
@@ -420,7 +554,7 @@ export const apiAiLitigation = https.onRequest(
           suggestedArguments: analysisData?.suggestedArguments || [],
           relatedPrecedents: analysisData?.relatedPrecedents || [],
           _meta: {
-            tool: toolType,
+            tool: effectiveToolType,
             searchQuery: searchQuery?.substring(0, 100),
             dataSources: sources,
             citationsCount: citations.length,

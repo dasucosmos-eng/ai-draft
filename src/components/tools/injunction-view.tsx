@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-civil',
   apiTask: 'generateInjunctionIA',
   module: 'civil' as const,
+  requiredFields: ['applicantName', 'injunctionType'],
   formFields: [
     { key: 'applicantName', label: 'Applicant Name', placeholder: 'Name of the applicant', half: true },
     { key: 'respondentName', label: 'Respondent Name', placeholder: 'Name of the respondent', half: true },

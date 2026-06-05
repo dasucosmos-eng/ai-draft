@@ -5,7 +5,7 @@ import * as admin from "firebase-admin";
 // ai-execution — Firebase Cloud Function
 // AI-powered execution module for Indian legal proceedings under CPC
 // Generates Execution Petitions, Execution Applications, schedules, and calculations
-// Uses Sarvam AI (primary, sarvam-105b) with Groq fallback
+// Uses Sarvam AI (primary, sarvam-105b) with Groq fallback, then Gemini
 // Returns: { success, data: { ... } } — structure varies by task
 
 import { https } from "firebase-functions/v2";
@@ -295,7 +295,7 @@ export const apiAiExecution = https.onRequest(
         if (!task) {
           res.status(400).json({
             success: false,
-            error: "task is required. Valid tasks: generateEP, generateEA, generateSchedule, parseDecree, calculateLimitation",
+            error: "task is required. Valid tasks: generateDocument, generateEP, generateEA, generateSchedule, parseDecree, calculateLimitation",
           });
           return;
         }
@@ -303,14 +303,225 @@ export const apiAiExecution = https.onRequest(
         console.log(`[ai-execution] Task: ${task}`);
 
         switch (task) {
+          // ─── Task 0: Generate Document (auto-detect) ───
+          case "generateDocument": {
+            // Auto-detect document type based on provided fields.
+            // If a mode like property_attachment, salary_attachment, civil_arrest, garnishee
+            // is present, or if applicantName/respondentName are used (EA-style), route to generateEA.
+            // Otherwise default to generateEP.
+            const eaModeHints = [
+              "property_attachment", "salary_attachment", "civil_arrest", "garnishee",
+            ];
+            const hasEAMode = eaModeHints.some(
+              (m) => req.body.mode === m || req.body.executionMode === m
+            );
+            const hasEAStyleFields =
+              req.body.applicantName || req.body.respondentName;
+
+            // Re-invoke with the correct sub-task
+            if (hasEAMode || hasEAStyleFields) {
+              console.log(`[ai-execution] generateDocument detected EA mode, routing to generateEA`);
+              req.body.task = "generateEA";
+              // If mode isn't set yet but executionMode is, copy it
+              if (!req.body.mode && req.body.executionMode) {
+                req.body.mode = req.body.executionMode;
+              }
+            } else {
+              console.log(`[ai-execution] generateDocument defaulting to generateEP`);
+              req.body.task = "generateEP";
+            }
+
+            // Fall through — re-read task from req.body and let the switch handle it
+            // We directly duplicate the logic here to avoid recursion depth issues with
+            // async handlers. Instead, we'll invoke the handler by tail-calling the
+            // same switch block logic inline.
+
+            const detectedTask = req.body.task;
+            if (detectedTask === "generateEP") {
+              // ─── generateEP with flat-to-nested adapter ───
+              const decreeDetails = req.body.decreeDetails || {
+                caseNumber: req.body.decreeNumber || '',
+                courtName: req.body.courtName || '',
+                parties: `${req.body.decreeHolderName || ''} vs ${req.body.judgmentDebtorName || ''}`.trim() || 'Not specified',
+                decreeDate: req.body.decreeDate || '',
+                decreeType: req.body.decreeType || 'Money Decree',
+                decreeAmount: req.body.amountDecreed || req.body.decreeAmount || '0',
+                interestRate: req.body.interestRate || '',
+                interestFrom: req.body.interestFrom || '',
+                interestTo: req.body.interestTo || '',
+                costs: req.body.costs || '',
+              };
+              const executionDetails = req.body.executionDetails || {
+                modes: req.body.modes || req.body.executionModes || ['attachment_of_property', 'arrest_of_judgment_debtor'],
+                filedOn: req.body.filedOn || new Date().toISOString().split('T')[0],
+                amountPaid: req.body.amountPaid || '0',
+                pendingAmount: req.body.amountDue || req.body.pendingAmount || 'Not specified',
+                executionCourt: req.body.executionCourt || req.body.courtName || '',
+                condonationReason: req.body.condonationReason || '',
+              };
+              const courtFormat = req.body.courtFormat || '';
+
+              const userPrompt = buildEPPrompt(decreeDetails, executionDetails, courtFormat);
+
+              let data: {
+                title: string;
+                content: string;
+                keyPoints: string[];
+                warnings: string[];
+                memoOfCalculation?: string;
+              };
+
+              try {
+                data = await callSarvamStructured<{
+                  title: string;
+                  content: string;
+                  keyPoints: string[];
+                  warnings: string[];
+                  memoOfCalculation?: string;
+                }>(SYSTEM_PROMPT, userPrompt, EP_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              } catch (sarvamErr) {
+                console.error("[ai-execution] Sarvam failed for generateEP (via generateDocument), falling back to Groq:", sarvamErr?.message);
+                try {
+                  data = await callGroqStructured<{
+                    title: string;
+                    content: string;
+                    keyPoints: string[];
+                    warnings: string[];
+                    memoOfCalculation?: string;
+                  }>(SYSTEM_PROMPT, userPrompt, EP_JSON_STRUCTURE, 0.3);
+                } catch (groqErr) {
+                  console.error("[ai-execution] Groq failed for generateEP (via generateDocument), falling back to Gemini:", groqErr?.message);
+                  const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${EP_JSON_STRUCTURE}`;
+                  const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+                  try { data = parseLLMJSON(geminiResponse); } catch (pe) {
+                    throw new Error("Could not parse Gemini: " + pe?.message);
+                  }
+                }
+              }
+
+              logUsage("ai-execution", undefined, 3000);
+
+              res.json({
+                success: true,
+                data: {
+                  ...data,
+                  _documentType: "execution_petition",
+                  _routedFrom: "generateDocument",
+                },
+              });
+              return;
+            } else {
+              // ─── generateEA with flat-to-nested adapter ───
+              const mode = req.body.mode || 'property_attachment';
+              const decreeDetails = req.body.decreeDetails || {
+                caseNumber: req.body.decreeNumber || req.body.epNumber || '',
+                courtName: req.body.courtName || '',
+                parties: `${req.body.applicantName || ''} vs ${req.body.respondentName || ''}`.trim() || 'Not specified',
+                decreeDate: req.body.decreeDate || '',
+                decreeType: 'Money Decree',
+                decreeAmount: req.body.decreeAmount || '0',
+                interestRate: '',
+              };
+              const assetDetails = req.body.assetDetails || {
+                type: req.body.mode || 'property',
+                description: req.body.propertyDetails || req.body.assetDescription || '',
+                valueEstimate: req.body.valueEstimate || '',
+                address: req.body.debtorAddress || '',
+                employerName: req.body.employerName || '',
+                bankName: req.body.bankName || '',
+                accountNumber: req.body.accountNumber || '',
+              };
+              const courtFormat = req.body.courtFormat || '';
+
+              const validModes = ["property_attachment", "salary_attachment", "civil_arrest", "garnishee"];
+              const effectiveMode = validModes.includes(mode) ? mode : "property_attachment";
+
+              const userPrompt = buildEAPrompt(decreeDetails, effectiveMode, assetDetails, courtFormat);
+
+              let data: {
+                title: string;
+                content: string;
+                keyPoints: string[];
+                warnings: string[];
+              };
+
+              try {
+                data = await callSarvamStructured<{
+                  title: string;
+                  content: string;
+                  keyPoints: string[];
+                  warnings: string[];
+                }>(SYSTEM_PROMPT, userPrompt, EA_JSON_STRUCTURE, 0.3, "sarvam-105b");
+              } catch (sarvamErr) {
+                console.error("[ai-execution] Sarvam failed for generateEA (via generateDocument), falling back to Groq:", sarvamErr?.message);
+                try {
+                  data = await callGroqStructured<{
+                    title: string;
+                    content: string;
+                    keyPoints: string[];
+                    warnings: string[];
+                  }>(SYSTEM_PROMPT, userPrompt, EA_JSON_STRUCTURE, 0.3);
+                } catch (groqErr) {
+                  console.error("[ai-execution] Groq failed for generateEA (via generateDocument), falling back to Gemini:", groqErr?.message);
+                  const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${EA_JSON_STRUCTURE}`;
+                  const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
+                  try { data = parseLLMJSON(geminiResponse); } catch (pe) {
+                    throw new Error("Could not parse Gemini: " + pe?.message);
+                  }
+                }
+              }
+
+              logUsage("ai-execution", undefined, 3000);
+
+              res.json({
+                success: true,
+                data: {
+                  ...data,
+                  _documentType: "execution_application",
+                  _routedFrom: "generateDocument",
+                },
+              });
+              return;
+            }
+          }
+
           // ─── Task 1: Generate Execution Petition ───
           case "generateEP": {
-            const { decreeDetails, executionDetails, courtFormat } = req.body;
+            // Flat-to-nested adapter: if the frontend sends flat fields instead of
+            // nested decreeDetails/executionDetails objects, build them automatically.
+            const decreeDetails = req.body.decreeDetails || {
+              caseNumber: req.body.decreeNumber || '',
+              courtName: req.body.courtName || '',
+              parties: `${req.body.decreeHolderName || ''} vs ${req.body.judgmentDebtorName || ''}`.trim() || 'Not specified',
+              decreeDate: req.body.decreeDate || '',
+              decreeType: req.body.decreeType || 'Money Decree',
+              decreeAmount: req.body.amountDecreed || req.body.decreeAmount || '0',
+              interestRate: req.body.interestRate || '',
+              interestFrom: req.body.interestFrom || '',
+              interestTo: req.body.interestTo || '',
+              costs: req.body.costs || '',
+            };
+            const executionDetails = req.body.executionDetails || {
+              modes: req.body.modes || req.body.executionModes || ['attachment_of_property', 'arrest_of_judgment_debtor'],
+              filedOn: req.body.filedOn || new Date().toISOString().split('T')[0],
+              amountPaid: req.body.amountPaid || '0',
+              pendingAmount: req.body.amountDue || req.body.pendingAmount || 'Not specified',
+              executionCourt: req.body.executionCourt || req.body.courtName || '',
+              condonationReason: req.body.condonationReason || '',
+            };
+            const courtFormat = req.body.courtFormat || '';
 
-            if (!decreeDetails || !executionDetails) {
+            // Minimal validation: at least some decree info should be present
+            const hasSomeDecreeInfo =
+              decreeDetails.caseNumber ||
+              decreeDetails.courtName ||
+              decreeDetails.parties ||
+              decreeDetails.decreeDate;
+
+            if (!hasSomeDecreeInfo) {
               res.status(400).json({
                 success: false,
-                error: "decreeDetails and executionDetails are required for generateEP.",
+                error: "Insufficient decree information provided for generateEP. Provide decreeDetails or individual fields (decreeNumber, courtName, decreeHolderName, judgmentDebtorName, decreeDate, etc.).",
               });
               return;
             }
@@ -364,27 +575,48 @@ export const apiAiExecution = https.onRequest(
 
           // ─── Task 2: Generate Execution Application ───
           case "generateEA": {
-            const { decreeDetails, mode, assetDetails, courtFormat } = req.body;
+            // Flat-to-nested adapter: if the frontend sends flat fields instead of
+            // nested decreeDetails/mode/assetDetails objects, build them automatically.
+            const mode = req.body.mode || 'property_attachment';
+            const decreeDetails = req.body.decreeDetails || {
+              caseNumber: req.body.decreeNumber || req.body.epNumber || '',
+              courtName: req.body.courtName || '',
+              parties: `${req.body.applicantName || ''} vs ${req.body.respondentName || ''}`.trim() || 'Not specified',
+              decreeDate: req.body.decreeDate || '',
+              decreeType: 'Money Decree',
+              decreeAmount: req.body.decreeAmount || '0',
+              interestRate: '',
+            };
+            const assetDetails = req.body.assetDetails || {
+              type: req.body.mode || 'property',
+              description: req.body.propertyDetails || req.body.assetDescription || '',
+              valueEstimate: req.body.valueEstimate || '',
+              address: req.body.debtorAddress || '',
+              employerName: req.body.employerName || '',
+              bankName: req.body.bankName || '',
+              accountNumber: req.body.accountNumber || '',
+            };
+            const courtFormat = req.body.courtFormat || '';
 
             const validModes = ["property_attachment", "salary_attachment", "civil_arrest", "garnishee"];
+            const effectiveMode = validModes.includes(mode) ? mode : "property_attachment";
 
-            if (!decreeDetails || !mode) {
+            // Minimal validation: at least some decree info should be present
+            const hasSomeDecreeInfo =
+              decreeDetails.caseNumber ||
+              decreeDetails.courtName ||
+              decreeDetails.parties ||
+              decreeDetails.decreeDate;
+
+            if (!hasSomeDecreeInfo) {
               res.status(400).json({
                 success: false,
-                error: "decreeDetails and mode are required for generateEA.",
+                error: "Insufficient decree information provided for generateEA. Provide decreeDetails or individual fields (decreeNumber, courtName, applicantName, respondentName, decreeDate, etc.).",
               });
               return;
             }
 
-            if (!validModes.includes(mode)) {
-              res.status(400).json({
-                success: false,
-                error: `Invalid mode "${mode}". Valid modes: ${validModes.join(", ")}`,
-              });
-              return;
-            }
-
-            const userPrompt = buildEAPrompt(decreeDetails, mode, assetDetails, courtFormat);
+            const userPrompt = buildEAPrompt(decreeDetails, effectiveMode, assetDetails, courtFormat);
 
             let data: {
               title: string;
@@ -624,7 +856,7 @@ export const apiAiExecution = https.onRequest(
           default: {
             res.status(400).json({
               success: false,
-              error: `Unknown task "${task}". Valid tasks: generateEP, generateEA, generateSchedule, parseDecree, calculateLimitation`,
+              error: `Unknown task "${task}". Valid tasks: generateDocument, generateEP, generateEA, generateSchedule, parseDecree, calculateLimitation`,
             });
             return;
           }

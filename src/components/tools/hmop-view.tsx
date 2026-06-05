@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-family',
   apiTask: 'generateDivorce',
   module: 'family' as const,
+  requiredFields: ['petitionerName', 'respondentName'],
   formFields: [
     { key: 'petitionerName', label: 'Petitioner Name', placeholder: 'Spouse filing the petition', half: true },
     { key: 'respondentName', label: 'Respondent Name', placeholder: 'Other spouse', half: true },

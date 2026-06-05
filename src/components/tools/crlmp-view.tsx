@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-criminal',
   apiTask: 'generateCRLMP',
   module: 'criminal' as const,
+  requiredFields: ['petitionerName', 'impugnedOrder'],
   formFields: [
     { key: 'petitionerName', label: 'Petitioner Name', placeholder: 'Name of petitioner', half: true },
     { key: 'respondentName', label: 'Respondent Name', placeholder: 'State / Respondent', half: true },

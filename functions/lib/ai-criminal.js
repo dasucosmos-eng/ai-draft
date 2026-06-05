@@ -41,7 +41,8 @@ const admin = __importStar(require("firebase-admin"));
 // ai-criminal — Firebase Cloud Function
 // AI-powered Criminal Law drafting module for AI Draft legal platform
 // Generates Bail Applications, CRP (Revision/Quashing), Writ Petitions,
-// CRLMP (Criminal Miscellaneous Petitions), parses FIRs, and suggests bail grounds
+// CRLMP (Criminal Miscellaneous Petitions), Criminal Appeals,
+// parses FIRs, and suggests bail grounds
 // Handles both IPC/CrPC (pre-July 1, 2024) and BNS/BNSS (post-July 1, 2024) law references
 // Returns: { success, data: {...} } or { success: false, error: "..." }
 const v2_1 = require("firebase-functions/v2");
@@ -129,6 +130,12 @@ const CRLMP_JSON_STRUCTURE = `{
   "content": "Full CRLMP text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., CRLMP, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and CRLMP number, case details (case number, court, order date), petitioner and respondent details, factual background in numbered paragraphs, grounds for the relief sought in numbered paragraphs with legal provisions, prayer clause specifying the exact relief, verification and signature block. Make it court-ready.",
   "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
   "warnings": ["Important warning about limitations or procedural requirements", "Any flag about old/new law section usage"]
+}`;
+const CRIMINAL_APPEAL_JSON_STRUCTURE = `{
+  "title": "Title of the criminal appeal (e.g., 'Criminal Appeal against Conviction under Section 374 CrPC / Section 427 BNSS')",
+  "content": "Full criminal appeal text in PLAIN TEXT format (NO markdown). Body text must be in normal sentence case — DO NOT write in ALL CAPS. Only use ALL CAPS for top-level headings like IN THE HIGH COURT OF..., CRIMINAL APPEAL, VERIFICATION, PRAYER. Section sub-headings use Title Case. Include: cause title with court name and appeal number, appellant and respondent details, impugned judgment date and details, FIR details and sections charged, facts of the case in numbered paragraphs, conviction and sentence details, grounds of appeal in numbered paragraphs with legal reasoning, prayer clause requesting setting aside of conviction/sentence or reduction of sentence, verification and signature block. Make it court-ready.",
+  "keyPoints": ["Key legal point 1", "Key legal point 2", "Key legal point 3"],
+  "warnings": ["Important warning about limitation period or maintainability", "Any flag about old/new law section usage"]
 }`;
 // ─── Task: generateBail ──────────────────────────────────────────────────────────
 function buildBailPrompt(bailType, firDetails, accusedDetails, caseDetails, grounds, suretyDetails, offenceCategory, punishmentRange) {
@@ -447,6 +454,119 @@ ${grounds || "No specific grounds provided — derive from available facts."}
 Draft the complete CRLMP with proper cause title, factual background, grounds for the relief, prayer clause, and verification.`;
     return prompt;
 }
+// ─── Task: generateCriminalAppeal ──────────────────────────────────────────────────
+function buildCriminalAppealPrompt(appellantName, respondentName, lowerCourt, appellateCourt, firNumber, policeStation, convictionDate, sectionsCharged, sentence, impugnedOrder, groundsOfAppeal, facts) {
+    return `Draft a complete, court-ready Criminal Appeal against conviction.
+
+## Appeal Details
+- **Appellant:** ${appellantName || "Not specified"}
+- **Respondent (State):** ${respondentName || "State"}
+- **Lower Court (Trial Court):** ${lowerCourt || "Not specified"}
+- **Appellate Court:** ${appellateCourt || "Not specified"}
+- **Applicable Law:** Section 374 CrPC (Appeal from conviction) / Section 427 BNSS
+
+## FIR Details
+- **FIR Number:** ${firNumber || "Not specified"}
+- **Police Station:** ${policeStation || "Not specified"}
+
+## Conviction Details
+- **Date of Conviction/Impugned Order:** ${convictionDate || "Not specified"}
+- **Sections Charged:** ${sectionsCharged.join(", ") || "Not specified"}
+- **Sentence Awarded:** ${sentence || "Not specified"}
+
+## Impugned Order (Judgment Being Appealed)
+${impugnedOrder || "No impugned order details provided — draft with placeholders."}
+
+## Facts of the Case
+${facts || "No facts provided — draft with placeholders."}
+
+## Grounds of Appeal (as provided by advocate)
+${groundsOfAppeal || "No specific grounds provided — derive from available facts."}
+
+Draft the complete criminal appeal. You must:
+1. Include proper cause title with appellate court name and appeal number
+2. Include appellant and respondent (State) details
+3. Include impugned judgment date and details in numbered paragraphs
+4. Include FIR details and sections charged
+5. Present facts of the case in numbered paragraphs
+6. State the conviction and sentence details
+7. Present grounds of appeal in numbered paragraphs with legal reasoning, including:
+   - Perversity of findings (if findings are contrary to evidence)
+   - Improper appreciation of evidence
+   - Legal infirmities in the impugned judgment
+   - Violation of principles of natural justice
+   - Any procedural irregularities
+8. Auto-detect correct section references based on old/new law
+9. Include prayer clause requesting setting aside of conviction/sentence or reduction of sentence
+10. Include verification and signature block
+11. Flag any warnings about limitation period or old vs new law usage`;
+}
+// ─── Helper: Normalize array from string or array ─────────────────────────────────
+function normalizeArray(val) {
+    if (!val)
+        return [];
+    if (Array.isArray(val))
+        return val.map((s) => String(s).trim()).filter(Boolean);
+    if (typeof val === "string")
+        return val.split(",").map((s) => s.trim()).filter(Boolean);
+    return [];
+}
+// ─── Helper: Detect writType from string ─────────────────────────────────────────
+function normalizeWritType(val) {
+    if (!val)
+        return "mandamus";
+    const lower = val.toLowerCase().replace(/[\s\-_]/g, "");
+    if (lower.includes("habeascorpus") || lower.includes("habeas"))
+        return "habeas_corpus";
+    if (lower.includes("certiorari"))
+        return "certiorari";
+    if (lower.includes("prohibition"))
+        return "prohibition";
+    if (lower.includes("quowarranto") || lower.includes("quowarranto"))
+        return "quo_warranto";
+    if (lower.includes("mandamus"))
+        return "mandamus";
+    return val;
+}
+// ─── Helper: Detect jurisdiction from courtName ─────────────────────────────────
+function detectJurisdictionFromCourt(courtName) {
+    if (!courtName)
+        return { jurisdiction: "high_court" };
+    const lower = courtName.toLowerCase();
+    if (lower.includes("supreme"))
+        return { jurisdiction: "supreme_court" };
+    // Try to extract high court name
+    const hcMatch = lower.match(/high\s+court\s+of\s+(.+)/);
+    if (hcMatch)
+        return { jurisdiction: "high_court", highCourtName: courtName };
+    // If it's just "High Court" without name, default
+    if (lower.includes("high court"))
+        return { jurisdiction: "high_court", highCourtName: courtName };
+    return { jurisdiction: "high_court", highCourtName: courtName };
+}
+// ─── Helper: Detect crlmpType from petitionType ──────────────────────────────────
+function detectCrlmpType(val) {
+    if (!val)
+        return "interim_relief";
+    const lower = val.toLowerCase().replace(/[\s\-_]/g, "");
+    if (lower.includes("suspension") || lower.includes("sentence"))
+        return "suspension_sentence";
+    if (lower.includes("modification"))
+        return "modification";
+    if (lower.includes("direction"))
+        return "directions";
+    if (lower.includes("transfer"))
+        return "transfer";
+    if (lower.includes("expunction") || lower.includes("remarks"))
+        return "expunction";
+    if (lower.includes("quash"))
+        return "quashing";
+    if (lower.includes("leave") || lower.includes("appeal"))
+        return "leave_to_appeal";
+    if (lower.includes("interim"))
+        return "interim_relief";
+    return val;
+}
 // ─── Main Cloud Function ───────────────────────────────────────────────────────
 exports.apiAiCriminal = v2_1.https.onRequest({
     timeoutSeconds: 180,
@@ -476,24 +596,422 @@ exports.apiAiCriminal = v2_1.https.onRequest({
             if (!task) {
                 res.status(400).json({
                     success: false,
-                    error: "task is required. Valid tasks: generateBail, generateCRP, generateWrit, parseFIR, suggestBailGrounds, generateCRLMP",
+                    error: "task is required. Valid tasks: generateDocument, generateBail, generateCRP, generateWrit, parseFIR, suggestBailGrounds, generateCRLMP, generateCriminalAppeal",
                 });
                 return;
             }
             console.log(`[ai-criminal] Task: ${task}`);
             switch (task) {
                 // ────────────────────────────────────────────────────────────────────
-                // TASK 1: generateBail
+                // TASK 0: generateDocument (auto-detect and route)
+                // ────────────────────────────────────────────────────────────────────
+                case "generateDocument": {
+                    const body = req.body;
+                    const documentType = (body.documentType || "").toLowerCase().replace(/[\s\-_]/g, "");
+                    // Auto-detect from documentType or provided fields
+                    let detectedTask = "generateBail"; // default fallback
+                    if (documentType.includes("bail")) {
+                        detectedTask = "generateBail";
+                    }
+                    else if (documentType.includes("revision") || documentType.includes("crp") || documentType.includes("quash")) {
+                        detectedTask = "generateCRP";
+                    }
+                    else if (documentType.includes("writ")) {
+                        detectedTask = "generateWrit";
+                    }
+                    else if (documentType.includes("crlmp") || documentType.includes("miscellaneous") || documentType.includes("interim") || documentType.includes("suspension")) {
+                        detectedTask = "generateCRLMP";
+                    }
+                    else if (documentType.includes("appeal")) {
+                        detectedTask = "generateCriminalAppeal";
+                    }
+                    else if (documentType.includes("fir")) {
+                        detectedTask = "parseFIR";
+                    }
+                    else if (documentType.includes("bailground") || documentType.includes("suggest")) {
+                        detectedTask = "suggestBailGrounds";
+                    }
+                    else if (body.bailType || body.applicantName) {
+                        detectedTask = "generateBail";
+                    }
+                    else if (body.crpType || body.petitionerName && body.impugnedOrderDate) {
+                        detectedTask = "generateCRP";
+                    }
+                    else if (body.writType) {
+                        detectedTask = "generateWrit";
+                    }
+                    else if (body.petitionType) {
+                        detectedTask = "generateCRLMP";
+                    }
+                    else if (body.appellantName) {
+                        detectedTask = "generateCriminalAppeal";
+                    }
+                    else if (body.firText) {
+                        detectedTask = "parseFIR";
+                    }
+                    console.log(`[ai-criminal] generateDocument auto-detected -> ${detectedTask}`);
+                    // Override task and fall through to the appropriate handler
+                    req.body.task = detectedTask;
+                    // Re-enter switch — we use a labeled approach by duplicating the handler logic below
+                    // Instead, we recursively call the inner handler by re-assigning task
+                    const innerTask = detectedTask;
+                    switch (innerTask) {
+                        case "generateBail": {
+                            const bailType = body.bailType || 'regular';
+                            const firDetails = body.firDetails || {
+                                firNumber: body.firNumber || '',
+                                policeStation: body.policeStation || '',
+                                dateOfFir: body.arrestDate || body.dateOfFir || '',
+                                sectionsCharged: normalizeArray(body.sectionsCharged),
+                                underOldOrNewLaw: body.underOldOrNewLaw || 'UNKNOWN',
+                            };
+                            const accusedDetails = body.accusedDetails || {
+                                name: body.applicantName || body.accusedName || body.name || '',
+                                age: body.age || '',
+                                address: body.address || '',
+                                occupation: body.occupation || '',
+                                arrested: body.arrested !== undefined ? body.arrested : true,
+                                custodyDate: body.custodyDate || body.arrestDate || '',
+                            };
+                            const caseDetails = body.caseDetails || {
+                                courtName: body.courtName || '',
+                                caseNumber: body.caseNumber || '',
+                                nextHearing: body.nextHearing || '',
+                            };
+                            const grounds = body.grounds ? (Array.isArray(body.grounds) ? body.grounds : String(body.grounds).split('\n').filter(Boolean)) : [];
+                            const suretyDetails = body.suretyDetails || body.sureties ? {
+                                name: '',
+                                address: '',
+                                amount: '',
+                                relation: '',
+                                notes: body.sureties || body.suretyDetails || '',
+                            } : undefined;
+                            const offenceCategory = body.offenceCategory || body.offense || '';
+                            const punishmentRange = body.punishmentRange || '';
+                            const userPrompt = buildBailPrompt(bailType, firDetails, accusedDetails, caseDetails, grounds, suretyDetails, offenceCategory, punishmentRange);
+                            let data;
+                            try {
+                                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, BAIL_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                            }
+                            catch (sarvamErr) {
+                                console.error("[ai-criminal] Sarvam failed for generateBail, falling back to Groq:", sarvamErr?.message);
+                                try {
+                                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, BAIL_JSON_STRUCTURE, 0.3);
+                                }
+                                catch (groqErr) {
+                                    console.error("[ai-criminal] Groq failed for generateBail, falling back to Gemini:", groqErr?.message);
+                                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${BAIL_JSON_STRUCTURE}`;
+                                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                                    try {
+                                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                                    }
+                                    catch (pe) {
+                                        throw new Error("Could not parse Gemini: " + pe?.message);
+                                    }
+                                }
+                            }
+                            (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                            data = (0, utils_1.stripMarkdownFromData)(data);
+                            res.json({ success: true, data });
+                            break;
+                        }
+                        case "generateCRP": {
+                            const crpType = body.crpType || 'revision';
+                            const impugnedOrder = body.impugnedOrder && typeof body.impugnedOrder === 'object' ? body.impugnedOrder : {
+                                date: body.impugnedOrderDate || body.orderDate || '',
+                                courtName: body.lowerCourt || '',
+                                orderDetails: body.impugnedOrder || '',
+                            };
+                            const petitionerDetails = body.petitionerDetails || {
+                                name: body.petitionerName || '',
+                                address: body.petitionerAddress || '',
+                                advocate: body.petitionerAdvocate || '',
+                            };
+                            const respondentDetails = body.respondentDetails || {
+                                name: body.respondentState || body.respondentName || 'State',
+                                address: body.respondentAddress || '',
+                                advocate: '',
+                            };
+                            const caseHistory = body.caseHistory || body.facts || '';
+                            const grounds = body.grounds ? (Array.isArray(body.grounds) ? body.grounds : String(body.grounds).split('\n').filter(Boolean)) : [];
+                            const caseType = body.caseType || 'criminal';
+                            const userPrompt = buildCRPPrompt(crpType, impugnedOrder, petitionerDetails, respondentDetails, caseHistory, grounds, caseType);
+                            let data;
+                            try {
+                                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, CRP_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                            }
+                            catch (sarvamErr) {
+                                console.error("[ai-criminal] Sarvam failed for generateCRP, falling back to Groq:", sarvamErr?.message);
+                                try {
+                                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, CRP_JSON_STRUCTURE, 0.3);
+                                }
+                                catch (groqErr) {
+                                    console.error("[ai-criminal] Groq failed for generateCRP, falling back to Gemini:", groqErr?.message);
+                                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${CRP_JSON_STRUCTURE}`;
+                                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                                    try {
+                                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                                    }
+                                    catch (pe) {
+                                        throw new Error("Could not parse Gemini: " + pe?.message);
+                                    }
+                                }
+                            }
+                            (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                            data = (0, utils_1.stripMarkdownFromData)(data);
+                            res.json({ success: true, data });
+                            break;
+                        }
+                        case "generateWrit": {
+                            const writType = normalizeWritType(body.writType || body.type);
+                            const isPIL = !!body.isPIL;
+                            const petitionerDetails = body.petitionerDetails || {
+                                name: body.petitionerName || '',
+                                address: body.petitionerAddress || '',
+                                advocate: body.petitionerAdvocate || '',
+                            };
+                            const respondentDetails = (body.respondentDetails && Array.isArray(body.respondentDetails))
+                                ? body.respondentDetails
+                                : [{
+                                        designation: body.respondentName || body.publicAuthority || 'State',
+                                        department: body.publicAuthority || body.respondentDepartment || '',
+                                        address: body.respondentAddress || '',
+                                    }];
+                            const violationDetails = body.violationDetails || {
+                                fundamentalRight: body.fundamentalRights || '',
+                                administrativeAction: body.impugnedOrder || '',
+                                reliefSought: body.prayer || '',
+                            };
+                            const facts = body.facts || '';
+                            const { jurisdiction, highCourtName } = body.jurisdiction
+                                ? { jurisdiction: body.jurisdiction, highCourtName: body.highCourtName }
+                                : detectJurisdictionFromCourt(body.courtName || '');
+                            const userPrompt = buildWritPrompt(writType, isPIL, petitionerDetails, respondentDetails, violationDetails, facts, jurisdiction, highCourtName);
+                            let data;
+                            try {
+                                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, WRIT_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                            }
+                            catch (sarvamErr) {
+                                console.error("[ai-criminal] Sarvam failed for generateWrit, falling back to Groq:", sarvamErr?.message);
+                                try {
+                                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, WRIT_JSON_STRUCTURE, 0.3);
+                                }
+                                catch (groqErr) {
+                                    console.error("[ai-criminal] Groq failed for generateWrit, falling back to Gemini:", groqErr?.message);
+                                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${WRIT_JSON_STRUCTURE}`;
+                                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                                    try {
+                                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                                    }
+                                    catch (pe) {
+                                        throw new Error("Could not parse Gemini: " + pe?.message);
+                                    }
+                                }
+                            }
+                            (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                            data = (0, utils_1.stripMarkdownFromData)(data);
+                            res.json({ success: true, data });
+                            break;
+                        }
+                        case "generateCRLMP": {
+                            const crlmpType = body.crlmpType || detectCrlmpType(body.petitionType || body.crlmpType || '');
+                            const caseDetails = body.caseDetails || {
+                                caseNumber: body.caseNumber || '',
+                                courtName: body.courtName || body.lowerCourt || '',
+                                orderDate: body.impugnedOrderDate || body.orderDate || '',
+                            };
+                            const petitionerDetails = body.petitionerDetails || {
+                                name: body.petitionerName || '',
+                                address: body.petitionerAddress || '',
+                            };
+                            const respondentDetails = body.respondentDetails || {
+                                name: body.respondentName || body.respondentState || 'State',
+                                address: body.respondentAddress || '',
+                            };
+                            const prayerDetails = body.prayerDetails || body.prayer || '';
+                            const grounds = body.grounds || '';
+                            const userPrompt = buildCRLMPPrompt(crlmpType, caseDetails, petitionerDetails, respondentDetails, prayerDetails, grounds);
+                            let data;
+                            try {
+                                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, CRLMP_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                            }
+                            catch (sarvamErr) {
+                                console.error("[ai-criminal] Sarvam failed for generateCRLMP, falling back to Groq:", sarvamErr?.message);
+                                try {
+                                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, CRLMP_JSON_STRUCTURE, 0.3);
+                                }
+                                catch (groqErr) {
+                                    console.error("[ai-criminal] Groq failed for generateCRLMP, falling back to Gemini:", groqErr?.message);
+                                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${CRLMP_JSON_STRUCTURE}`;
+                                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                                    try {
+                                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                                    }
+                                    catch (pe) {
+                                        throw new Error("Could not parse Gemini: " + pe?.message);
+                                    }
+                                }
+                            }
+                            (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                            data = (0, utils_1.stripMarkdownFromData)(data);
+                            res.json({ success: true, data });
+                            break;
+                        }
+                        case "generateCriminalAppeal": {
+                            const appellantName = body.appellantName || '';
+                            const respondentName = body.respondentName || 'State';
+                            const lowerCourt = body.lowerCourt || '';
+                            const appellateCourt = body.appellateCourt || '';
+                            const firNumber = body.firNumber || '';
+                            const policeStation = body.policeStation || '';
+                            const convictionDate = body.convictionDate || '';
+                            const sectionsCharged = normalizeArray(body.sectionsCharged);
+                            const sentence = body.sentence || '';
+                            const impugnedOrder = body.impugnedOrder || '';
+                            const groundsOfAppeal = body.groundsOfAppeal || body.grounds || '';
+                            const facts = body.facts || '';
+                            const userPrompt = buildCriminalAppealPrompt(appellantName, respondentName, lowerCourt, appellateCourt, firNumber, policeStation, convictionDate, sectionsCharged, sentence, impugnedOrder, groundsOfAppeal, facts);
+                            let data;
+                            try {
+                                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, CRIMINAL_APPEAL_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                            }
+                            catch (sarvamErr) {
+                                console.error("[ai-criminal] Sarvam failed for generateCriminalAppeal, falling back to Groq:", sarvamErr?.message);
+                                try {
+                                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, CRIMINAL_APPEAL_JSON_STRUCTURE, 0.3);
+                                }
+                                catch (groqErr) {
+                                    console.error("[ai-criminal] Groq failed for generateCriminalAppeal, falling back to Gemini:", groqErr?.message);
+                                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${CRIMINAL_APPEAL_JSON_STRUCTURE}`;
+                                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                                    try {
+                                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                                    }
+                                    catch (pe) {
+                                        throw new Error("Could not parse Gemini: " + pe?.message);
+                                    }
+                                }
+                            }
+                            (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                            data = (0, utils_1.stripMarkdownFromData)(data);
+                            res.json({ success: true, data });
+                            break;
+                        }
+                        case "parseFIR": {
+                            const { firText } = body;
+                            if (!firText) {
+                                res.status(400).json({ success: false, error: "firText is required for parseFIR." });
+                                return;
+                            }
+                            const userPrompt = buildParseFIRPrompt(firText);
+                            let data;
+                            try {
+                                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, PARSE_FIR_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                            }
+                            catch (sarvamErr) {
+                                console.error("[ai-criminal] Sarvam failed for parseFIR, falling back to Groq:", sarvamErr?.message);
+                                try {
+                                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, PARSE_FIR_JSON_STRUCTURE, 0.3);
+                                }
+                                catch (groqErr) {
+                                    console.error("[ai-criminal] Groq failed for parseFIR, falling back to Gemini:", groqErr?.message);
+                                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${PARSE_FIR_JSON_STRUCTURE}`;
+                                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                                    try {
+                                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                                    }
+                                    catch (pe) {
+                                        throw new Error("Could not parse Gemini: " + pe?.message);
+                                    }
+                                }
+                            }
+                            (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                            data = (0, utils_1.stripMarkdownFromData)(data);
+                            res.json({ success: true, data });
+                            break;
+                        }
+                        case "suggestBailGrounds": {
+                            const firDetails = body.firDetails || {
+                                sectionsCharged: normalizeArray(body.sectionsCharged),
+                                underOldOrNewLaw: body.underOldOrNewLaw || 'UNKNOWN',
+                                briefFacts: body.facts || body.briefFacts || '',
+                            };
+                            const accusedDetails = body.accusedDetails || {
+                                name: body.applicantName || body.accusedName || '',
+                                age: body.age || '',
+                                occupation: body.occupation || '',
+                                arrested: body.arrested !== undefined ? body.arrested : true,
+                            };
+                            const custodyPeriod = body.custodyPeriod || '';
+                            const userPrompt = buildSuggestBailGroundsPrompt(firDetails, accusedDetails, custodyPeriod);
+                            let data;
+                            try {
+                                data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, SUGGEST_BAIL_GROUNDS_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                            }
+                            catch (sarvamErr) {
+                                console.error("[ai-criminal] Sarvam failed for suggestBailGrounds, falling back to Groq:", sarvamErr?.message);
+                                try {
+                                    data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, SUGGEST_BAIL_GROUNDS_JSON_STRUCTURE, 0.3);
+                                }
+                                catch (groqErr) {
+                                    console.error("[ai-criminal] Groq failed for suggestBailGrounds, falling back to Gemini:", groqErr?.message);
+                                    const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${SUGGEST_BAIL_GROUNDS_JSON_STRUCTURE}`;
+                                    const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                                    try {
+                                        data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                                    }
+                                    catch (pe) {
+                                        throw new Error("Could not parse Gemini: " + pe?.message);
+                                    }
+                                }
+                            }
+                            (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                            data = (0, utils_1.stripMarkdownFromData)(data);
+                            res.json({ success: true, data });
+                            break;
+                        }
+                        default: {
+                            res.status(400).json({ success: false, error: `Could not auto-detect document type from documentType="${body.documentType}". Valid types: Bail Application, Revision/CRP, Writ Petition, CRLMP, Criminal Appeal, FIR, Bail Grounds.` });
+                        }
+                    }
+                    break;
+                }
+                // ────────────────────────────────────────────────────────────────────
+                // TASK 1: generateBail (accepts BOTH nested and flat fields)
                 // ────────────────────────────────────────────────────────────────────
                 case "generateBail": {
-                    const { bailType, firDetails, accusedDetails, caseDetails, grounds, suretyDetails, offenceCategory, punishmentRange } = req.body;
-                    if (!bailType || !firDetails || !accusedDetails || !caseDetails) {
-                        res.status(400).json({
-                            success: false,
-                            error: "bailType, firDetails, accusedDetails, and caseDetails are required for generateBail.",
-                        });
-                        return;
-                    }
+                    // Accept BOTH nested and flat formats
+                    const bailType = req.body.bailType || 'regular';
+                    const firDetails = req.body.firDetails || {
+                        firNumber: req.body.firNumber || '',
+                        policeStation: req.body.policeStation || '',
+                        dateOfFir: req.body.arrestDate || req.body.dateOfFir || '',
+                        sectionsCharged: normalizeArray(req.body.sectionsCharged),
+                        underOldOrNewLaw: req.body.underOldOrNewLaw || 'UNKNOWN',
+                    };
+                    const accusedDetails = req.body.accusedDetails || {
+                        name: req.body.applicantName || req.body.accusedName || '',
+                        age: req.body.age || '',
+                        address: req.body.address || '',
+                        occupation: req.body.occupation || '',
+                        arrested: req.body.arrested !== undefined ? req.body.arrested : true,
+                        custodyDate: req.body.custodyDate || req.body.arrestDate || '',
+                    };
+                    const caseDetails = req.body.caseDetails || {
+                        courtName: req.body.courtName || '',
+                        caseNumber: req.body.caseNumber || '',
+                        nextHearing: req.body.nextHearing || '',
+                    };
+                    const grounds = req.body.grounds ? (Array.isArray(req.body.grounds) ? req.body.grounds : String(req.body.grounds).split('\n').filter(Boolean)) : [];
+                    const suretyDetails = req.body.suretyDetails || req.body.sureties ? {
+                        name: '',
+                        address: '',
+                        amount: '',
+                        relation: '',
+                        notes: req.body.sureties || req.body.suretyDetails || '',
+                    } : undefined;
+                    const offenceCategory = req.body.offenceCategory || req.body.offense || '';
+                    const punishmentRange = req.body.punishmentRange || '';
                     if (!["regular", "anticipatory", "default", "interim"].includes(bailType)) {
                         res.status(400).json({
                             success: false,
@@ -501,7 +1019,7 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildBailPrompt(bailType, firDetails, accusedDetails, caseDetails, grounds || [], suretyDetails, offenceCategory, punishmentRange);
+                    const userPrompt = buildBailPrompt(bailType, firDetails, accusedDetails, caseDetails, grounds, suretyDetails, offenceCategory, punishmentRange);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, BAIL_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -523,23 +1041,35 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                             }
                         }
                     }
-                    (0, groq_client_1.logUsage)("ai-criminal", undefined, 3000);
+                    (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
                     data = (0, utils_1.stripMarkdownFromData)(data);
                     res.json({ success: true, data });
                     break;
                 }
                 // ────────────────────────────────────────────────────────────────────
-                // TASK 2: generateCRP
+                // TASK 2: generateCRP (accepts BOTH nested and flat fields)
                 // ────────────────────────────────────────────────────────────────────
                 case "generateCRP": {
-                    const { crpType, impugnedOrder, petitionerDetails, respondentDetails, caseHistory, grounds, caseType } = req.body;
-                    if (!crpType || !impugnedOrder || !petitionerDetails || !respondentDetails) {
-                        res.status(400).json({
-                            success: false,
-                            error: "crpType, impugnedOrder, petitionerDetails, and respondentDetails are required for generateCRP.",
-                        });
-                        return;
-                    }
+                    // Accept BOTH nested and flat formats
+                    const crpType = req.body.crpType || 'revision';
+                    const impugnedOrder = req.body.impugnedOrder && typeof req.body.impugnedOrder === 'object' ? req.body.impugnedOrder : {
+                        date: req.body.impugnedOrderDate || req.body.orderDate || '',
+                        courtName: req.body.lowerCourt || '',
+                        orderDetails: req.body.impugnedOrder || '',
+                    };
+                    const petitionerDetails = req.body.petitionerDetails || {
+                        name: req.body.petitionerName || '',
+                        address: req.body.petitionerAddress || '',
+                        advocate: req.body.petitionerAdvocate || '',
+                    };
+                    const respondentDetails = req.body.respondentDetails || {
+                        name: req.body.respondentState || req.body.respondentName || 'State',
+                        address: req.body.respondentAddress || '',
+                        advocate: '',
+                    };
+                    const caseHistory = req.body.caseHistory || req.body.facts || '';
+                    const grounds = req.body.grounds ? (Array.isArray(req.body.grounds) ? req.body.grounds : String(req.body.grounds).split('\n').filter(Boolean)) : [];
+                    const caseType = req.body.caseType || 'criminal';
                     if (!["revision", "quashing"].includes(crpType)) {
                         res.status(400).json({
                             success: false,
@@ -547,7 +1077,7 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildCRPPrompt(crpType, impugnedOrder, petitionerDetails, respondentDetails, caseHistory || "", grounds || [], caseType);
+                    const userPrompt = buildCRPPrompt(crpType, impugnedOrder, petitionerDetails, respondentDetails, caseHistory, grounds, caseType);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, CRP_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -569,23 +1099,39 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                             }
                         }
                     }
-                    (0, groq_client_1.logUsage)("ai-criminal", undefined, 3000);
+                    (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
                     data = (0, utils_1.stripMarkdownFromData)(data);
                     res.json({ success: true, data });
                     break;
                 }
                 // ────────────────────────────────────────────────────────────────────
-                // TASK 3: generateWrit
+                // TASK 3: generateWrit (accepts BOTH nested and flat fields)
                 // ────────────────────────────────────────────────────────────────────
                 case "generateWrit": {
-                    const { writType, isPIL, petitionerDetails, respondentDetails, violationDetails, facts, jurisdiction, highCourtName } = req.body;
-                    if (!writType || !petitionerDetails || !respondentDetails || !violationDetails) {
-                        res.status(400).json({
-                            success: false,
-                            error: "writType, petitionerDetails, respondentDetails, and violationDetails are required for generateWrit.",
-                        });
-                        return;
-                    }
+                    // Accept BOTH nested and flat formats
+                    const writType = normalizeWritType(req.body.writType || req.body.type);
+                    const isPIL = !!req.body.isPIL;
+                    const petitionerDetails = req.body.petitionerDetails || {
+                        name: req.body.petitionerName || '',
+                        address: req.body.petitionerAddress || '',
+                        advocate: req.body.petitionerAdvocate || '',
+                    };
+                    const respondentDetails = (req.body.respondentDetails && Array.isArray(req.body.respondentDetails))
+                        ? req.body.respondentDetails
+                        : [{
+                                designation: req.body.respondentName || req.body.publicAuthority || 'State',
+                                department: req.body.publicAuthority || req.body.respondentDepartment || '',
+                                address: req.body.respondentAddress || '',
+                            }];
+                    const violationDetails = req.body.violationDetails || {
+                        fundamentalRight: req.body.fundamentalRights || '',
+                        administrativeAction: req.body.impugnedOrder || '',
+                        reliefSought: req.body.prayer || '',
+                    };
+                    const facts = req.body.facts || '';
+                    const { jurisdiction, highCourtName } = req.body.jurisdiction
+                        ? { jurisdiction: req.body.jurisdiction, highCourtName: req.body.highCourtName }
+                        : detectJurisdictionFromCourt(req.body.courtName || '');
                     if (!["mandamus", "certiorari", "prohibition", "habeas_corpus", "quo_warranto"].includes(writType)) {
                         res.status(400).json({
                             success: false,
@@ -600,7 +1146,7 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                         });
                         return;
                     }
-                    const userPrompt = buildWritPrompt(writType, !!isPIL, petitionerDetails, respondentDetails || [], violationDetails, facts || "", jurisdiction, highCourtName);
+                    const userPrompt = buildWritPrompt(writType, isPIL, petitionerDetails, respondentDetails, violationDetails, facts, jurisdiction, highCourtName);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, WRIT_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -622,7 +1168,7 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                             }
                         }
                     }
-                    (0, groq_client_1.logUsage)("ai-criminal", undefined, 3000);
+                    (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
                     data = (0, utils_1.stripMarkdownFromData)(data);
                     res.json({ success: true, data });
                     break;
@@ -661,23 +1207,28 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                             }
                         }
                     }
-                    (0, groq_client_1.logUsage)("ai-criminal", undefined, 3000);
+                    (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
                     data = (0, utils_1.stripMarkdownFromData)(data);
                     res.json({ success: true, data });
                     break;
                 }
                 // ────────────────────────────────────────────────────────────────────
-                // TASK 5: suggestBailGrounds
+                // TASK 5: suggestBailGrounds (accepts BOTH nested and flat fields)
                 // ────────────────────────────────────────────────────────────────────
                 case "suggestBailGrounds": {
-                    const { firDetails, accusedDetails, custodyPeriod } = req.body;
-                    if (!firDetails || !accusedDetails) {
-                        res.status(400).json({
-                            success: false,
-                            error: "firDetails and accusedDetails are required for suggestBailGrounds.",
-                        });
-                        return;
-                    }
+                    // Accept BOTH nested and flat formats
+                    const firDetails = req.body.firDetails || {
+                        sectionsCharged: normalizeArray(req.body.sectionsCharged),
+                        underOldOrNewLaw: req.body.underOldOrNewLaw || 'UNKNOWN',
+                        briefFacts: req.body.facts || req.body.briefFacts || '',
+                    };
+                    const accusedDetails = req.body.accusedDetails || {
+                        name: req.body.applicantName || req.body.accusedName || '',
+                        age: req.body.age || '',
+                        occupation: req.body.occupation || '',
+                        arrested: req.body.arrested !== undefined ? req.body.arrested : true,
+                    };
+                    const custodyPeriod = req.body.custodyPeriod || '';
                     const userPrompt = buildSuggestBailGroundsPrompt(firDetails, accusedDetails, custodyPeriod);
                     let data;
                     try {
@@ -700,31 +1251,40 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                             }
                         }
                     }
-                    (0, groq_client_1.logUsage)("ai-criminal", undefined, 3000);
+                    (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
                     data = (0, utils_1.stripMarkdownFromData)(data);
                     res.json({ success: true, data });
                     break;
                 }
                 // ────────────────────────────────────────────────────────────────────
-                // TASK 6: generateCRLMP
+                // TASK 6: generateCRLMP (accepts BOTH nested and flat fields)
                 // ────────────────────────────────────────────────────────────────────
                 case "generateCRLMP": {
-                    const { crlmpType, caseDetails, petitionerDetails, respondentDetails, prayerDetails, grounds } = req.body;
-                    if (!crlmpType || !caseDetails || !petitionerDetails || !respondentDetails) {
+                    // Accept BOTH nested and flat formats
+                    const crlmpType = req.body.crlmpType || detectCrlmpType(req.body.petitionType || req.body.crlmpType || '');
+                    const caseDetails = req.body.caseDetails || {
+                        caseNumber: req.body.caseNumber || '',
+                        courtName: req.body.courtName || req.body.lowerCourt || '',
+                        orderDate: req.body.impugnedOrderDate || req.body.orderDate || '',
+                    };
+                    const petitionerDetails = req.body.petitionerDetails || {
+                        name: req.body.petitionerName || '',
+                        address: req.body.petitionerAddress || '',
+                    };
+                    const respondentDetails = req.body.respondentDetails || {
+                        name: req.body.respondentName || req.body.respondentState || 'State',
+                        address: req.body.respondentAddress || '',
+                    };
+                    const prayerDetails = req.body.prayerDetails || req.body.prayer || '';
+                    const grounds = req.body.grounds || '';
+                    if (!["interim_relief", "suspension_sentence", "modification", "directions", "transfer", "expunction", "quashing", "leave_to_appeal"].includes(crlmpType)) {
                         res.status(400).json({
                             success: false,
-                            error: "crlmpType, caseDetails, petitionerDetails, and respondentDetails are required for generateCRLMP.",
+                            error: "crlmpType must be 'interim_relief', 'suspension_sentence', 'modification', 'directions', 'transfer', 'expunction', 'quashing', or 'leave_to_appeal'.",
                         });
                         return;
                     }
-                    if (!["interim_relief", "suspension_sentence", "modification", "directions", "transfer", "expunction"].includes(crlmpType)) {
-                        res.status(400).json({
-                            success: false,
-                            error: "crlmpType must be 'interim_relief', 'suspension_sentence', 'modification', 'directions', 'transfer', or 'expunction'.",
-                        });
-                        return;
-                    }
-                    const userPrompt = buildCRLMPPrompt(crlmpType, caseDetails, petitionerDetails, respondentDetails, prayerDetails || "", grounds || "");
+                    const userPrompt = buildCRLMPPrompt(crlmpType, caseDetails, petitionerDetails, respondentDetails, prayerDetails, grounds);
                     let data;
                     try {
                         data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, CRLMP_JSON_STRUCTURE, 0.3, "sarvam-105b");
@@ -746,7 +1306,51 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                             }
                         }
                     }
-                    (0, groq_client_1.logUsage)("ai-criminal", undefined, 3000);
+                    (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
+                    data = (0, utils_1.stripMarkdownFromData)(data);
+                    res.json({ success: true, data });
+                    break;
+                }
+                // ────────────────────────────────────────────────────────────────────
+                // TASK 7: generateCriminalAppeal (flat fields from criminal-appeals-view)
+                // ────────────────────────────────────────────────────────────────────
+                case "generateCriminalAppeal": {
+                    const body = req.body;
+                    const appellantName = body.appellantName || '';
+                    const respondentName = body.respondentName || 'State';
+                    const lowerCourt = body.lowerCourt || '';
+                    const appellateCourt = body.appellateCourt || '';
+                    const firNumber = body.firNumber || '';
+                    const policeStation = body.policeStation || '';
+                    const convictionDate = body.convictionDate || '';
+                    const sectionsCharged = normalizeArray(body.sectionsCharged);
+                    const sentence = body.sentence || '';
+                    const impugnedOrder = body.impugnedOrder || '';
+                    const groundsOfAppeal = body.groundsOfAppeal || body.grounds || '';
+                    const facts = body.facts || '';
+                    const userPrompt = buildCriminalAppealPrompt(appellantName, respondentName, lowerCourt, appellateCourt, firNumber, policeStation, convictionDate, sectionsCharged, sentence, impugnedOrder, groundsOfAppeal, facts);
+                    let data;
+                    try {
+                        data = await (0, sarvam_client_1.callSarvamStructured)(SYSTEM_PROMPT, userPrompt, CRIMINAL_APPEAL_JSON_STRUCTURE, 0.3, "sarvam-105b");
+                    }
+                    catch (sarvamErr) {
+                        console.error("[ai-criminal] Sarvam failed for generateCriminalAppeal, falling back to Groq:", sarvamErr?.message);
+                        try {
+                            data = await (0, groq_client_1.callGroqStructured)(SYSTEM_PROMPT, userPrompt, CRIMINAL_APPEAL_JSON_STRUCTURE, 0.3);
+                        }
+                        catch (groqErr) {
+                            console.error("[ai-criminal] Groq failed for generateCriminalAppeal, falling back to Gemini:", groqErr?.message);
+                            const geminiPrompt = `${SYSTEM_PROMPT}\n\nCRITICAL: Respond ONLY with valid JSON:\n${CRIMINAL_APPEAL_JSON_STRUCTURE}`;
+                            const geminiResponse = await (0, gemini_client_1.callGeminiText)(geminiPrompt, userPrompt, 0.3);
+                            try {
+                                data = (0, parse_json_1.parseLLMJSON)(geminiResponse);
+                            }
+                            catch (pe) {
+                                throw new Error("Could not parse Gemini: " + pe?.message);
+                            }
+                        }
+                    }
+                    (0, groq_client_1.logUsage)("ai-criminal", uid, 3000);
                     data = (0, utils_1.stripMarkdownFromData)(data);
                     res.json({ success: true, data });
                     break;
@@ -757,7 +1361,7 @@ exports.apiAiCriminal = v2_1.https.onRequest({
                 default: {
                     res.status(400).json({
                         success: false,
-                        error: `Unknown task: "${task}". Valid tasks: generateBail, generateCRP, generateWrit, parseFIR, suggestBailGrounds, generateCRLMP`,
+                        error: `Unknown task: "${task}". Valid tasks: generateDocument, generateBail, generateCRP, generateWrit, parseFIR, suggestBailGrounds, generateCRLMP, generateCriminalAppeal`,
                     });
                 }
             }

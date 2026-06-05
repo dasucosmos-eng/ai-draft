@@ -44,6 +44,7 @@ interface ViewConfig {
   documentType?: string;
   module: 'civil' | 'criminal' | 'family' | 'execution';
   formFields: FormField[];
+  requiredFields?: string[];
   getResultContent: (res: any) => string;
 }
 
@@ -177,7 +178,7 @@ function useAutonomousDrafting(config: ViewConfig) {
     return newFormData;
   };
 
-  // CORE AUTONOMOUS FLOW: After extraction, auto-trigger generation
+  // CORE AUTONOMOUS FLOW: After extraction, auto-trigger generation (only if no required fields missing)
   const processExtractedAndGenerate = useCallback((text: string, structuredData: any, fileName?: string) => {
     setExtractedText(text);
     setExtractedData(structuredData);
@@ -187,12 +188,31 @@ function useAutonomousDrafting(config: ViewConfig) {
     setProgressLabel('AI filling form fields...');
 
     // Auto-fill ALL form fields from extracted data
+    let newFormData: Record<string, string> = {};
     if (structuredData) {
-      const newFormData = mapExtractedToFormFields(structuredData);
+      newFormData = mapExtractedToFormFields(structuredData);
       setFormData(prev => ({ ...prev, ...newFormData }));
     }
 
-    // AUTO-GENERATE: After extraction, automatically generate the draft
+    // AUTO-GENERATE: Only if there are no required fields, or all required fields are filled
+    if (config.requiredFields && config.requiredFields.length > 0) {
+      const mergedForCheck = { ...formDataRef.current, ...newFormData };
+      const missing = config.requiredFields.filter(f => {
+        const val = mergedForCheck[f];
+        return !val || !val.trim();
+      });
+      if (missing.length > 0) {
+        const fieldLabels = config.formFields
+          .filter(f => missing.includes(f.key))
+          .map(f => f.label);
+        toast.info(`Fill in ${fieldLabels.join(', ')} to generate. Fields auto-filled from your input.`);
+        setStage('idle');
+        setProgress(0);
+        setProgressLabel('');
+        return;
+      }
+    }
+
     setStage('generating');
     setProgress(75);
     setProgressLabel('AI drafting document...');
@@ -200,7 +220,7 @@ function useAutonomousDrafting(config: ViewConfig) {
     autoGenTimerRef.current = setTimeout(() => {
       performGenerate(text, structuredData);
     }, 600);
-  }, [config.formFields]);
+  }, [config.formFields, config.requiredFields]);
 
   // Handle file upload extraction (called by DocumentUpload component)
   const handleExtracted = useCallback((data: { text: string; structuredData: any; fileName?: string }) => {
@@ -250,7 +270,7 @@ function useAutonomousDrafting(config: ViewConfig) {
     setLoading(false);
   }, [config.module, processExtractedAndGenerate]);
 
-  const performGenerate = useCallback(async (extractedContent: string, mergedData: Record<string, string>) => {
+  const performGenerate = useCallback(async (extractedContent: string, mergedData: Record<string, string>, skipRequiredCheck?: boolean) => {
     setLoading(true);
     setResult('');
     setError('');
@@ -269,6 +289,20 @@ function useAutonomousDrafting(config: ViewConfig) {
         if (val && typeof val === 'string' && val.trim()) body[k] = val;
       });
 
+      // Check required fields before sending (skip for manual generate)
+      if (!skipRequiredCheck && config.requiredFields && config.requiredFields.length > 0) {
+        const missing = config.requiredFields.filter(f => {
+          const val = body[f] || currentFormData[f];
+          return !val || !val.trim();
+        });
+        if (missing.length > 0) {
+          const fieldLabels = config.formFields
+            .filter(f => missing.includes(f.key))
+            .map(f => f.label);
+          throw new Error(`Please fill in: ${fieldLabels.join(', ')} before generating.`);
+        }
+      }
+
       const token = getAuthToken();
       const res = await apiCall(config.apiEndpoint, body, token || undefined);
       const content = config.getResultContent(res);
@@ -279,9 +313,20 @@ function useAutonomousDrafting(config: ViewConfig) {
       setProgressLabel('Complete');
       toast.success('Document generated successfully');
     } catch (err: any) {
-      setError(err?.message || 'Generation failed');
+      // Parse API error for better messages
+      let errorMsg = err?.message || 'Generation failed';
+      try {
+        if (errorMsg.includes('API error')) {
+          const jsonMatch = errorMsg.match(/\{[^}]+\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            errorMsg = parsed.error || parsed.details || errorMsg;
+          }
+        }
+      } catch { /* use default error */ }
+      setError(errorMsg);
       setStage('error');
-      toast.error(err?.message || 'Failed to generate document');
+      toast.error(errorMsg);
     }
     setLoading(false);
   }, [config]);
@@ -293,7 +338,8 @@ function useAutonomousDrafting(config: ViewConfig) {
     }
     setProgress(70);
     setProgressLabel('Generating draft...');
-    await performGenerate(extractedText, formData);
+    // Manual generate: skip required field check (user explicitly clicked generate)
+    await performGenerate(extractedText, formData, true);
   }, [extractedText, formData, performGenerate]);
 
   const handleSaveDocument = (content: string) => {
@@ -674,9 +720,9 @@ export function DraftingView({ config }: DraftingViewProps) {
             </div>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="max-h-[500px]">
+            <div className="max-h-[70vh] overflow-y-auto pr-2">
               <MarkdownContent content={result} />
-            </ScrollArea>
+            </div>
           </CardContent>
         </Card>
       )}

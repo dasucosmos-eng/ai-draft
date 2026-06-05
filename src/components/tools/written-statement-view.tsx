@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-civil',
   apiTask: 'generateWS',
   module: 'civil' as const,
+  requiredFields: ['plaintText', 'defendantName'],
   formFields: [
     { key: 'plaintiffName', label: 'Plaintiff Name', placeholder: 'Name of the plaintiff', half: true },
     { key: 'defendantName', label: 'Defendant Name', placeholder: 'Your client name', half: true },

@@ -10,6 +10,7 @@ const config = {
   apiEndpoint: '/ai-family',
   apiTask: 'generateSuccession',
   module: 'family' as const,
+  requiredFields: ['petitionerName', 'deceasedName'],
   formFields: [
     { key: 'petitionerName', label: 'Petitioner Name', placeholder: 'Name of applicant', half: true },
     { key: 'deceasedName', label: 'Deceased Name', placeholder: 'Name of deceased person', half: true },
