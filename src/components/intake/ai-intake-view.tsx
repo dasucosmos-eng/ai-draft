@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
-import { apiCall, getAuthToken } from '@/lib/api-client';
+import { apiCall, getFirebaseIdToken } from '@/lib/api-client';
 import { useDataStore } from '@/store/data-store';
 import { useAppStore } from '@/store/app-store';
 import { useClientsStore } from '@/store/clients-store';
@@ -163,7 +163,7 @@ export function AiIntakeView() {
           reader.readAsDataURL(file);
         });
 
-        const token = getAuthToken();
+        const token = await getFirebaseIdToken();
         if (!token) {
           throw new Error('Not authenticated. Please log in and try again.');
         }
@@ -172,7 +172,7 @@ export function AiIntakeView() {
           fileData: base64,
           mimeType: file.type || 'application/octet-stream',
           fileName: file.name,
-        }, token);
+        });
 
         if (!extractRes.success) {
           throw new Error(extractRes.error || 'File extraction returned an error');
@@ -222,12 +222,11 @@ export function AiIntakeView() {
     setProgressLabel('AI analyzing case details...');
 
     try {
-      const token = getAuthToken();
       const filesContent = (texts || extractedTexts).length > 0 ? (texts || extractedTexts).join('\n\n---\n\n') : undefined;
       const res = await apiCall('/ai-intake', {
         description,
         filesContent,
-      }, token || undefined);
+      });
 
       setProgress(70);
       setResult(res);
@@ -397,8 +396,7 @@ export function AiIntakeView() {
             // that the intake auto-draft doesn't provide. They don't support a generic
             // 'generateDocument' task. Use /ai-draft which accepts generic documentType + details.
 
-            const token = getAuthToken();
-            const draftRes = await apiCall(endpoint, body, token || undefined);
+            const draftRes = await apiCall(endpoint, body);
             // Handle response format: { success, data: { content } } or { content }
             const content = draftRes.data?.content || draftRes.content || draftRes.responseText || draftRes.draft || '';
             if (!content) {
