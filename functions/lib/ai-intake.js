@@ -170,9 +170,24 @@ exports.apiAiIntake = v2_1.https.onRequest({
             return;
         }
         try {
-            const { description, filesContent = [] } = req.body;
+            // SAFETY: Handle large bodies that may exceed default body-parser limit
+            let body = req.body;
+            if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
+                try {
+                    const raw = req.rawBody;
+                    if (raw && typeof raw === 'string')
+                        body = JSON.parse(raw);
+                    else if (Buffer.isBuffer(raw))
+                        body = JSON.parse(raw.toString('utf8'));
+                }
+                catch { /* use existing body */ }
+                if (!body || typeof body !== 'object')
+                    body = {};
+                req.body = body;
+            }
+            const { description, filesContent = '' } = req.body;
             // Accept description with at least 3 chars, or any uploaded file content
-            if (!description?.trim() && (!filesContent || filesContent.length === 0)) {
+            if (!description?.trim() && !filesContent) {
                 res.status(400).json({ error: "Please provide a case description or upload documents." });
                 return;
             }

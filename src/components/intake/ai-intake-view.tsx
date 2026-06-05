@@ -159,21 +159,35 @@ export function AiIntakeView() {
             const result = reader.result as string;
             resolve(result.split(',')[1]);
           };
-          reader.onerror = reject;
+          reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
           reader.readAsDataURL(file);
         });
 
         const token = getAuthToken();
+        if (!token) {
+          throw new Error('Not authenticated. Please log in and try again.');
+        }
+
         const extractRes = await apiCall('/ai-extract-file', {
           fileData: base64,
-          mimeType: file.type,
+          mimeType: file.type || 'application/octet-stream',
           fileName: file.name,
-        }, token || undefined);
+        }, token);
 
-        const text = extractRes.text || extractRes.content || '';
+        if (!extractRes.success) {
+          throw new Error(extractRes.error || 'File extraction returned an error');
+        }
+
+        const text = extractRes.content || extractRes.text || '';
+        if (!text || text.length < 5) {
+          throw new Error('Could not extract text from file — it may be a scanned image PDF');
+        }
         texts.push(text);
         newFiles.push({ name: file.name, size: `${(file.size / 1024).toFixed(1)} KB`, text, status: 'done' });
       } catch (err: any) {
+        const errMsg = err?.message || 'Unknown error';
+        console.error(`[intake] File upload failed for ${file.name}:`, errMsg);
+        toast.error(`Upload failed: ${file.name} — ${errMsg}`);
         newFiles.push({ name: file.name, size: '-', text: '', status: 'error' });
       }
     }

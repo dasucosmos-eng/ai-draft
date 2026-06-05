@@ -63,7 +63,7 @@ async function extractImageTextFallback(_base64Data: string, fileName: string): 
 
 export const apiExtractFile = https.onRequest(
   {
-    timeoutSeconds: 60,
+    timeoutSeconds: 120,
     region: "us-central1", secrets: aiFunctionSecrets,
   },
   async (req, res) => {
@@ -86,7 +86,26 @@ export const apiExtractFile = https.onRequest(
         return;
       }
       try {
-        const { fileData, fileName, mimeType } = req.body;
+        // SAFETY: Handle large bodies that may exceed Express default body-parser limit.
+        // Firebase Functions v2 may not parse JSON bodies > 100kb by default.
+        // req.rawBody contains the unparsed raw body as a fallback.
+        let body = req.body;
+        if (!body || !body.fileData) {
+          try {
+            const raw = (req as any).rawBody;
+            if (raw && typeof raw === 'string' && raw.length > 0) {
+              body = JSON.parse(raw);
+            } else if (Buffer.isBuffer(raw) && raw.length > 0) {
+              body = JSON.parse(raw.toString('utf8'));
+            }
+          } catch (parseErr) {
+            console.error('[extract-file] Failed to parse raw body:', parseErr);
+          }
+        }
+        if (!body) body = {};
+        req.body = body;
+
+        const { fileData, fileName, mimeType } = body;
         if (!fileData || !mimeType) {
           res.status(400).json({ error: "fileData and mimeType are required" });
           return;
@@ -134,9 +153,10 @@ export const apiExtractFile = https.onRequest(
         }
 
         if (!content || content.trim().length < 5) {
+          console.warn(`[extract-file] Empty content from ${fileName || 'file'} (${mimeType})`);
           res.status(422).json({
             success: false,
-            error: "Could not extract meaningful content from the file",
+            error: "Could not extract meaningful content from the file. If it's a scanned PDF/image, the text may not be embedded.",
             content: "",
           });
           return;
@@ -158,10 +178,11 @@ export const apiExtractFile = https.onRequest(
         });
       } catch (error) {
         console.error("[extract-file] Error:", error);
+        const errMsg = error instanceof Error ? error.message : String(error);
         res.status(500).json({
           success: false,
           error: "Failed to extract file content",
-          details: error instanceof Error ? error.message : String(error),
+          details: errMsg,
         });
       }
     });
