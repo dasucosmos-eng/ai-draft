@@ -32,7 +32,8 @@ export function CasesListView() {
   const cases = useDataStore((s) => s.cases);
   const addCase = useDataStore((s) => s.addCase);
   const deleteCase = useDataStore((s) => s.deleteCase);
-  const { setCurrentView, setSelectedCaseId } = useAppStore((s) => ({ setCurrentView: s.setCurrentView, setSelectedCaseId: s.setSelectedCaseId }));
+  const setCurrentView = useAppStore((s) => s.setCurrentView);
+  const setSelectedCaseId = useAppStore((s) => s.setSelectedCaseId);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
