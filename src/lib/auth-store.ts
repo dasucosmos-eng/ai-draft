@@ -2,9 +2,8 @@
  * Auth Store — handles authentication and data initialization.
  *
  * After auth succeeds:
- * 1. Initializes the sync layer (IndexedDB + server sync)
+ * 1. Initializes the sync layer (IndexedDB + Firestore sync)
  * 2. Loads data from IndexedDB (instant) and triggers background server pull
- * 3. Installs connectivity listeners (online/offline, visibility change, beforeunload)
  */
 
 import { apiCall, setAuthToken, setCurrentUid, clearAuth } from '@/lib/api-client';
@@ -29,15 +28,15 @@ function clearCachedUid(): void {
 
 /* ─── Load all user data via sync layer ─── */
 
-export async function loadAllUserData(uid: string, token: string): Promise<void> {
+export async function loadAllUserData(uid: string): Promise<void> {
   try {
-    await initializeSync(uid, token);
+    await initializeSync(uid);
   } catch (err) {
     console.warn('[auth] Failed to initialize sync:', err);
   }
 }
 
-/* ─── Ensure profile store gets populated from IndexedDB ─── */
+/* ─── Ensure compatibility stores get populated from IndexedDB ─── */
 
 async function populateStores() {
   try {
@@ -75,7 +74,7 @@ export async function verifyAndRestore(): Promise<boolean> {
     const result = await apiCall('/auth-verify', { token }, token);
     if (result.success) {
       setCachedUid(uid);
-      await loadAllUserData(uid, token);
+      await loadAllUserData(uid);
       await populateStores();
       return true;
     }
@@ -94,8 +93,10 @@ export async function googleAuth(): Promise<void> {
 }
 
 async function onAuthSuccess(uid: string, token: string) {
+  // We still keep the existing token-based auth (for Cloud Functions / API usage),
+  // but user data now syncs via Firestore.
   setCachedUid(uid);
-  await loadAllUserData(uid, token);
+  await loadAllUserData(uid);
   await populateStores();
 }
 
@@ -140,9 +141,8 @@ export async function handleTokenFromUrl(): Promise<boolean> {
       setAuthToken(token);
       setCurrentUid(result.user.uid);
       setCachedUid(result.user.uid);
-      await loadAllUserData(result.user.uid, token);
+      await loadAllUserData(result.user.uid);
       await populateStores();
-      // Clean URL
       window.history.replaceState({}, '', window.location.pathname);
       return true;
     }
@@ -163,7 +163,6 @@ export async function logout(): Promise<void> {
     console.warn('[logout] Failed to flush:', err);
   }
 
-  // Clear everything
   clearAuth();
   clearCachedUid();
 
@@ -181,5 +180,7 @@ export async function logout(): Promise<void> {
 
     const { useSubscriptionStore } = await import('@/store/subscription-store');
     useSubscriptionStore.getState().clearSubscription();
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
 }
