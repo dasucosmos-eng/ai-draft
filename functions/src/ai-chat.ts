@@ -81,7 +81,7 @@ export const apiAiChat = https.onRequest(
         const messages = [...history, { role: "user", content: message }];
         let responseText: string;
         try {
-          responseText = await callSarvamChat(sysPrompt, messages, 0.6, "sarvam-30b");
+          responseText = await callSarvamChat(sysPrompt, messages, 0.6, "sarvam-105b");
         } catch (sarvamErr) {
           console.error("[ai-chat] Sarvam failed, falling back to Groq:", sarvamErr?.message);
           try {
@@ -100,7 +100,7 @@ export const apiAiChat = https.onRequest(
             `User asked: "${message}"\nYour response was: "${responseText.substring(0, 500)}"`,
             SUGGESTIONS_JSON,
             0.3,
-            "sarvam-30b"
+            "sarvam-105b"
           );
         } catch (sarvamErr) {
           console.error("[ai-chat] Sarvam failed for suggestions, falling back to Groq:", sarvamErr?.message);

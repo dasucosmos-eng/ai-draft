@@ -14,7 +14,7 @@ export async function callSarvamStructured<T>(
   userPrompt: string,
   jsonStructureHint: string,
   temperature: number = 0.3,
-  model: string = "sarvam-30b",
+  model: string = "sarvam-105b",
   maxTokens: number = 4096
 ): Promise<T> {
   const fullPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON matching this structure:\n${jsonStructureHint}`;
@@ -38,7 +38,7 @@ export async function callSarvamText(
   systemPrompt: string,
   userPrompt: string,
   temperature: number = 0.6,
-  model: string = "sarvam-30b"
+  model: string = "sarvam-105b"
 ): Promise<string> {
   return sarvamChat([
     { role: "system", content: systemPrompt },
@@ -52,7 +52,7 @@ export async function callSarvamChat(
   systemPrompt: string,
   messages: { role: string; content: string }[],
   temperature: number = 0.6,
-  model: string = "sarvam-30b"
+  model: string = "sarvam-105b"
 ): Promise<string> {
   return sarvamChat(
     [{ role: "system", content: systemPrompt }, ...messages],

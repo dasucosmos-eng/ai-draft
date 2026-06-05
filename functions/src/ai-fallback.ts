@@ -44,7 +44,7 @@ function parseJsonFromText(text: string): any {
 
 export interface FallbackOptions {
   temperature?: number;
-  sarvamModel?: "sarvam-30b" | "sarvam-105b";
+  sarvamModel?: "sarvam-105b" | "sarvam-105b";
   maxTokens?: number;
   function_name?: string;
 }
@@ -63,7 +63,7 @@ export async function callAIWithFallback<T>(
   options?: FallbackOptions
 ): Promise<{ data: T; provider: string }> {
   const temperature = options?.temperature ?? 0.3;
-  const sarvamModel = options?.sarvamModel ?? "sarvam-30b";
+  const sarvamModel = options?.sarvamModel ?? "sarvam-105b";
   const maxTokens = options?.maxTokens ?? 4000;
   const functionName = options?.function_name ?? "unknown";
   const maxRetries = 2;

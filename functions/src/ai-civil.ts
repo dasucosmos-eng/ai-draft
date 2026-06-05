@@ -589,7 +589,7 @@ export const apiAiCivil = https.onRequest(
                   replyDraft: string;
                 }[];
                 preliminarySubmissions: string[];
-              }>(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3, "sarvam-105b", 6000);
+              }>(SYSTEM_PROMPT, userPrompt, WS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for generateWS, falling back to Groq:", sarvamErr?.message);
               try {
@@ -723,7 +723,7 @@ export const apiAiCivil = https.onRequest(
                   argumentDraft: string;
                 }[];
                 conclusion: string;
-              }>(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3, "sarvam-105b", 6000);
+              }>(SYSTEM_PROMPT, userPrompt, WRITTEN_ARGUMENTS_JSON_STRUCTURE, 0.3, "sarvam-105b", 4096);
             } catch (sarvamErr) {
               console.error("[ai-civil] Sarvam failed for generateWrittenArguments, falling back to Groq:", sarvamErr?.message);
               try {

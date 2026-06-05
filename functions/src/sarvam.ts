@@ -234,7 +234,7 @@ export async function detectLanguage(
  * Uses the v1/chat/completions endpoint
  * @param messages Array of chat messages
  * @param language Optional language hint for response
- * @param modelOverride Optional model name override (default: "sarvam-30b")
+ * @param modelOverride Optional model name override (default: "sarvam-105b")
  * @returns Chat response string
  */
 export async function sarvamChat(
@@ -264,7 +264,7 @@ export async function sarvamChat(
       : " You MUST respond in the same language as the user's message.";
 
     const body: Record<string, unknown> = {
-      model: modelOverride || "sarvam-30b",
+      model: modelOverride || "sarvam-105b",
       messages: chatMessages,
       temperature: temperatureOverride !== undefined ? temperatureOverride : 0.7,
       max_tokens: maxTokensOverride || 4096,
@@ -295,7 +295,7 @@ export async function sarvamChat(
     const message = firstChoice?.message as Record<string, unknown> | undefined;
     const finishReason = firstChoice?.finish_reason as string | undefined;
 
-    // Reasoning models (sarvam-30b, sarvam-105b) may put content in reasoning_content
+    // Reasoning models (sarvam-105b, sarvam-105b) may put content in reasoning_content
     const content = (message?.content as string) || "";
     if (content) {
       return content;

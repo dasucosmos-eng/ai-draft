@@ -371,7 +371,7 @@ export const apiAiLitigation = https.onRequest(
 
         let responseText: string;
         try {
-          responseText = await callSarvamText(systemPrompt, userMessage, 0.5, "sarvam-30b");
+          responseText = await callSarvamText(systemPrompt, userMessage, 0.5, "sarvam-105b");
         } catch (sarvamErr) {
           console.error("[ai-litigation] Sarvam failed, falling back to Groq:", sarvamErr?.message);
           try {
