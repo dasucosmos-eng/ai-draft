@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, enableIndexedDbPersistence, type Firestore } from 'firebase/firestore';
+import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 // Firebase Web App config (safe to be public in frontend)
@@ -16,7 +16,6 @@ const firebaseConfig = {
 
 let _app: FirebaseApp | null = null;
 let _db: Firestore | null = null;
-let _persistenceEnabled = false;
 
 export function getFirebaseApp(): FirebaseApp {
   if (_app) return _app;
@@ -36,15 +35,10 @@ export function getFirebaseDb(): Firestore {
   if (_db) return _db;
   _db = getFirestore(getFirebaseApp());
 
-  // Enable Firestore offline persistence (IndexedDB) for instant refresh + offline.
-  // If multiple tabs open, persistence may fail; that's okay.
-  if (typeof window !== 'undefined' && !_persistenceEnabled) {
-    _persistenceEnabled = true;
-    enableIndexedDbPersistence(_db).catch((err) => {
-      // Failed preconditions are expected in some cases (e.g. multiple tabs).
-      console.warn('[firebase] Firestore persistence not enabled:', err?.code || err);
-    });
-  }
+  // Note: We do NOT use enableIndexedDbPersistence here because the app has
+  // its own sync-layer (Dexie/IndexedDB) that manages persistence.
+  // Enabling Firestore SDK persistence would conflict with the manual sync
+  // layer and can cause silent write failures.
 
   return _db;
 }

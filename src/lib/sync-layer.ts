@@ -54,8 +54,10 @@ import {
   doc,
   getDoc,
   setDoc,
+  onSnapshot,
   serverTimestamp,
   type DocumentReference,
+  type Unsubscribe,
 } from 'firebase/firestore';
 
 /* ─── Sync state ─── */
@@ -64,6 +66,7 @@ let _syncInProgress = false;
 let _pullInProgress = false;
 let _listeners: Set<() => void> = new Set();
 let _currentUid: string | null = null;
+let _firestoreUnsubscribe: Unsubscribe | null = null;
 
 /* ─── Event emitter: notify hooks when data changes ─── */
 
@@ -131,8 +134,12 @@ async function pushSyncToServer() {
     await setDoc(userDataDoc(uid), payload, { merge: true });
     await setMeta('lastPushSync', Date.now());
   } catch (err) {
-    console.warn('[sync] Push to Firestore failed (will retry):', err);
-    _syncTimer = setTimeout(pushSyncToServer, 5000);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isPermissionDenied = errMsg.includes('PERMISSION_DENIED') || errMsg.includes('permission-denied');
+    console.error('[sync] Push to Firestore failed:', isPermissionDenied ? 'PERMISSION_DENIED — check Firestore rules' : errMsg);
+    if (!isPermissionDenied) {
+      _syncTimer = setTimeout(pushSyncToServer, 5000);
+    }
   } finally {
     _syncInProgress = false;
   }
@@ -413,6 +420,9 @@ export async function initializeSync(uid: string): Promise<CachedData> {
 
   await setMeta('cachedUid', uid);
 
+  // Set up real-time Firestore listener for instant cross-tab/cross-device sync
+  setupFirestoreListener(uid);
+
   const shouldPullImmediately = !lastSync || Date.now() - lastSync > 5 * 60 * 1000;
 
   if (shouldPullImmediately) {
@@ -430,6 +440,40 @@ export async function initializeSync(uid: string): Promise<CachedData> {
   return cached;
 }
 
+/* ─── Real-time Firestore listener ─── */
+
+function setupFirestoreListener(uid: string) {
+  // Detach previous listener if any
+  if (_firestoreUnsubscribe) {
+    _firestoreUnsubscribe();
+    _firestoreUnsubscribe = null;
+  }
+
+  try {
+    const docRef = userDataDoc(uid);
+    _firestoreUnsubscribe = onSnapshot(docRef, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data() as UserDataPayload;
+
+      // Write server snapshot to local IndexedDB
+      writeServerSnapshot(data).then(() => {
+        notifyListeners();
+        return setMeta('lastPullSync', Date.now());
+      }).catch((err) => {
+        console.warn('[sync] Failed to write server snapshot to IndexedDB:', err);
+      });
+    }, (err) => {
+      // Log permission errors clearly — this means Firestore rules are wrong
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes('PERMISSION_DENIED') || errMsg.includes('permission-denied')) {
+        console.error('[sync] Firestore listener PERMISSION_DENIED — check Firestore rules at users/{uid}/app/{docId}');
+      }
+    });
+  } catch (err) {
+    console.warn('[sync] Failed to set up Firestore listener:', err);
+  }
+}
+
 /* ─── Flush before logout ─── */
 
 export async function flushAndClear(): Promise<void> {
@@ -437,6 +481,11 @@ export async function flushAndClear(): Promise<void> {
     if (_syncTimer) {
       clearTimeout(_syncTimer);
       _syncTimer = null;
+    }
+    // Detach Firestore real-time listener
+    if (_firestoreUnsubscribe) {
+      _firestoreUnsubscribe();
+      _firestoreUnsubscribe = null;
     }
     await pushSyncToServer();
   } catch (err) {
