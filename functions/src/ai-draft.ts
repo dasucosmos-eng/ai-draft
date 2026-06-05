@@ -51,9 +51,8 @@ async function callAIWithRetry(
   const { callGroqStructured } = await import("./groq-client");
   const { callGeminiText } = await import("./gemini-client");
 
+  // Provider order: Gemini first (most reliable with SDK), then Groq, then Sarvam
   const providers = [
-    { name: "Sarvam", fn: () => callSarvamStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-105b") },
-    { name: "Groq", fn: () => callGroqStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3) },
     { name: "Gemini", fn: async () => {
       const geminiPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON:\n${JSON_STRUCTURE}`;
       const geminiResponse = await callGeminiText(geminiPrompt, userPrompt, 0.3);
@@ -66,6 +65,8 @@ async function callAIWithRetry(
         warnings: ["AI-generated document — please review before filing."],
       };
     }},
+    { name: "Groq", fn: () => callGroqStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3) },
+    { name: "Sarvam", fn: () => callSarvamStructured(systemPrompt, userPrompt, JSON_STRUCTURE, 0.3, "sarvam-m") },
   ];
 
   for (const provider of providers) {

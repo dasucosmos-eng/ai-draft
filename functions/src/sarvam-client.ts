@@ -14,14 +14,14 @@ export async function callSarvamStructured<T>(
   userPrompt: string,
   jsonStructureHint: string,
   temperature: number = 0.3,
-  model: string = "sarvam-30b",
-  maxTokens: number = 4000
+  model: string = "sarvam-m",
+  maxTokens: number = 4096
 ): Promise<T> {
   const fullPrompt = `${systemPrompt}\n\nCRITICAL: Respond ONLY with valid JSON matching this structure:\n${jsonStructureHint}`;
   const response = await sarvamChat([
     { role: "system", content: fullPrompt },
     { role: "user", content: userPrompt },
-  ], { temperature });
+  ], undefined, model);
 
   try {
     const cleaned = response.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -38,12 +38,12 @@ export async function callSarvamText(
   systemPrompt: string,
   userPrompt: string,
   temperature: number = 0.6,
-  model: string = "sarvam-30b"
+  model: string = "sarvam-m"
 ): Promise<string> {
   return sarvamChat([
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
-  ], { temperature });
+  ], undefined, model);
 }
 
 // ─── Core: multi-turn chat ──────────────────────────────────
@@ -52,9 +52,13 @@ export async function callSarvamChat(
   systemPrompt: string,
   messages: { role: string; content: string }[],
   temperature: number = 0.6,
-  model: string = "sarvam-30b"
+  model: string = "sarvam-m"
 ): Promise<string> {
-  return sarvamChat(messages, { temperature });
+  return sarvamChat(
+    [{ role: "system", content: systemPrompt }, ...messages],
+    undefined,
+    model
+  );
 }
 
 // ─── Translation ──────────────────────────────────────────────
