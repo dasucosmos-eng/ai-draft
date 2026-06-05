@@ -197,6 +197,9 @@ export async function googleAuth(): Promise<void> {
     if (err?.code === 'auth/invalid-api-key' || err?.code === 'auth/api-key-not-authorized') {
       throw new Error('Firebase configuration error. Please check your API key.');
     }
+    if (err?.code?.includes('are-blocked') || err?.message?.includes('identitytoolkit')?.includes('are-blocked')) {
+      throw new Error('Identity Toolkit API is blocked. Go to Google Cloud Console > APIs & Services > ensure "Identity Toolkit API" is enabled and not restricted.');
+    }
     throw new Error(err?.message || 'Google sign-in failed');
   }
 }
