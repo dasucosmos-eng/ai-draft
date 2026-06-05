@@ -57,6 +57,20 @@ interface DataState extends CachedData {
 }
 
 let _subscribed = false;
+let _updateScheduled = false;
+
+function scheduleStoreUpdate() {
+  if (_updateScheduled) return;
+  _updateScheduled = true;
+  // Use queueMicrotask to batch updates within the same tick
+  queueMicrotask(async () => {
+    _updateScheduled = false;
+    try {
+      const data = await loadAllCachedData();
+      useDataStore.setState(data);
+    } catch { /* ignore */ }
+  });
+}
 
 export const useDataStore = create<DataState>((set, get) => ({
   profile: null,
@@ -196,11 +210,8 @@ export async function initDataStoreBridge(): Promise<void> {
     useDataStore.setState({ dataLoaded: true });
   }
 
-  // Subscribe to future changes from sync-layer
-  onDataChange(async () => {
-    try {
-      const data = await loadAllCachedData();
-      useDataStore.setState(data);
-    } catch { /* ignore */ }
+  // Subscribe to future changes from sync-layer (debounced to prevent re-render loops)
+  onDataChange(() => {
+    scheduleStoreUpdate();
   });
 }
