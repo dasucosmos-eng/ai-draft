@@ -1,42 +1,69 @@
 /**
- * Sync layer — bridges IndexedDB (local cache) and the Firestore API (server).
+ * Sync layer — bridges IndexedDB (local cache) and Firestore (server).
  *
- * Architecture:
- * 1. **Write-through**: All mutations write to IndexedDB immediately (instant UI update),
- *    then queue a background sync to the server.
- * 2. **Pull on demand**: On mount, tab visibility change, and online events, pull latest
- *    data from server and merge into IndexedDB (server wins).
- * 3. **Offline queue**: When offline, sync queue items pile up. When back online, they flush.
- * 4. **Debounced sync**: Rapid mutations are batched — only one sync per second.
+ * Goal: social-app experience.
+ * - Instant UI from IndexedDB cache
+ * - Writes are optimistic + debounced
+ * - Firestore is the source of truth
+ * - Firestore SDK provides offline persistence (IndexedDB) separately
  */
 
-import { apiCall, getAuthToken, getCurrentUid } from '@/lib/api-client';
 import {
-  loadAllCachedData, writeServerSnapshot, clearAllData,
-  addToSyncQueue, drainSyncQueue, getSyncQueueSize,
-  setMeta, getMeta,
-  putCase, putClient, putDocument, putTask,
-  putTimelineEvent, putInvoice, putChatMessage,
-  setProfile as setProfileInDb, setSubscription as setSubscriptionInDb,
-  deleteCase as deleteCaseInDb, deleteClient as deleteClientInDb,
-  deleteDocument as deleteDocumentInDb, deleteTask as deleteTaskInDb,
-  deleteTimelineEvent as deleteTimelineEventInDb, deleteInvoice as deleteInvoiceInDb,
+  loadAllCachedData,
+  writeServerSnapshot,
+  clearAllData,
+  setMeta,
+  getMeta,
+  putCase,
+  putClient,
+  putDocument,
+  putTask,
+  putTimelineEvent,
+  putInvoice,
+  putChatMessage,
+  setProfile as setProfileInDb,
+  setSubscription as setSubscriptionInDb,
+  deleteCase as deleteCaseInDb,
+  deleteClient as deleteClientInDb,
+  deleteDocument as deleteDocumentInDb,
+  deleteTask as deleteTaskInDb,
+  deleteTimelineEvent as deleteTimelineEventInDb,
+  deleteInvoice as deleteInvoiceInDb,
   clearChatMessages as clearChatMessagesInDb,
-  type CachedData, type SyncQueueItem,
+  type CachedData,
 } from '@/lib/db';
 
 // Re-export for use in hooks
 export type { CachedData } from '@/lib/db';
+
 import type {
-  CaseItem, Client, ProfileData, DocumentItem, TaskItem,
-  TimelineEvent, InvoiceItem, ChatMessage, SubscriptionData,
+  CaseItem,
+  Client,
+  ProfileData,
+  DocumentItem,
+  TaskItem,
+  TimelineEvent,
+  InvoiceItem,
+  ChatMessage,
+  SubscriptionData,
+  UserDataPayload,
 } from '@/lib/types';
+
+import { getFirebaseDb } from '@/lib/firebase';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+  type DocumentReference,
+} from 'firebase/firestore';
 
 /* ─── Sync state ─── */
 let _syncTimer: ReturnType<typeof setTimeout> | null = null;
 let _syncInProgress = false;
 let _pullInProgress = false;
 let _listeners: Set<() => void> = new Set();
+let _currentUid: string | null = null;
 
 /* ─── Event emitter: notify hooks when data changes ─── */
 
@@ -46,25 +73,33 @@ export function onDataChange(listener: () => void): () => void {
 }
 
 function notifyListeners() {
-  _listeners.forEach(fn => fn());
+  _listeners.forEach((fn) => fn());
 }
 
-/* ─── Debounced push to server ─── */
+/* ─── Firestore document helpers ─── */
+
+function userDataDoc(uid: string): DocumentReference {
+  // Single-document shape for now (compatible with existing payload).
+  // Later: migrate to subcollections: clients/, drafts/, etc.
+  return doc(getFirebaseDb(), 'users', uid, 'app', 'data');
+}
+
+function _isOnline(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  return navigator.onLine !== false;
+}
+
+/* ─── Debounced push to Firestore ─── */
 
 async function pushSyncToServer() {
   if (_syncInProgress || !_isOnline()) {
-    // Re-schedule if busy or offline
-    if (_isOnline()) {
-      _syncTimer = setTimeout(pushSyncToServer, 2000);
-    }
+    if (_isOnline()) _syncTimer = setTimeout(pushSyncToServer, 2000);
     return;
   }
 
-  const token = getAuthToken();
-  const uid = getCurrentUid();
-  if (!token || !uid) return;
+  const uid = _currentUid;
+  if (!uid) return;
 
-  // Clear any pending timer
   if (_syncTimer) {
     clearTimeout(_syncTimer);
     _syncTimer = null;
@@ -74,27 +109,29 @@ async function pushSyncToServer() {
   try {
     const data = await loadAllCachedData();
 
-    const payload = {
-      action: 'save' as const,
-      uid,
+    const payload: UserDataPayload & {
+      _meta?: { updatedAt?: unknown; schemaVersion?: number };
+    } = {
       cases: data.cases,
       documents: data.documents,
       tasks: data.tasks,
       timelineEvents: data.timelineEvents,
       invoices: data.invoices,
       clients: data.clients,
-      profile: data.profile,
+      profile: data.profile || undefined,
       chatMessages: data.chatMessages,
-      subscription: data.subscription,
+      subscription: data.subscription || undefined,
+      _meta: {
+        updatedAt: serverTimestamp(),
+        schemaVersion: 1,
+      },
     };
 
-    await apiCall('/user-data', payload, token);
-
-    // Mark sync timestamp
+    // merge:true prevents accidental wipe of fields if we add more later.
+    await setDoc(userDataDoc(uid), payload, { merge: true });
     await setMeta('lastPushSync', Date.now());
   } catch (err) {
-    console.warn('[sync] Push failed (will retry):', err);
-    // Schedule retry with backoff
+    console.warn('[sync] Push to Firestore failed (will retry):', err);
     _syncTimer = setTimeout(pushSyncToServer, 5000);
   } finally {
     _syncInProgress = false;
@@ -106,16 +143,14 @@ function schedulePush(delay = 1000) {
   _syncTimer = setTimeout(pushSyncToServer, delay);
 }
 
-/* ─── Pull from server ─── */
+/* ─── Pull from Firestore ─── */
 
 export async function pullFromServer(): Promise<void> {
   if (_pullInProgress) return;
 
-  const token = getAuthToken();
-  const uid = getCurrentUid();
-  if (!token || !uid) return;
+  const uid = _currentUid;
+  if (!uid) return;
 
-  // First flush any pending local changes
   if (_syncTimer) {
     clearTimeout(_syncTimer);
     _syncTimer = null;
@@ -123,26 +158,25 @@ export async function pullFromServer(): Promise<void> {
 
   _pullInProgress = true;
   try {
-    const result = await apiCall('/user-data', { action: 'load', uid }, token);
-
-    if (result.success && result.data) {
-      await writeServerSnapshot(result.data);
+    const snap = await getDoc(userDataDoc(uid));
+    if (snap.exists()) {
+      const data = snap.data() as UserDataPayload;
+      await writeServerSnapshot(data);
       notifyListeners();
+      await setMeta('lastPullSync', Date.now());
+    } else {
+      // New user doc not yet created: do nothing (keep cached data)
+      // The first write will create it.
       await setMeta('lastPullSync', Date.now());
     }
   } catch (err) {
-    console.warn('[sync] Pull failed:', err);
+    console.warn('[sync] Pull from Firestore failed:', err);
   } finally {
     _pullInProgress = false;
   }
 }
 
-/* ─── Online/offline detection ─── */
-
-function _isOnline(): boolean {
-  if (typeof navigator === 'undefined') return true;
-  return navigator.onLine !== false;
-}
+/* ─── Connectivity listeners ─── */
 
 function installConnectivityListeners() {
   if (typeof window === 'undefined') return;
@@ -153,53 +187,28 @@ function installConnectivityListeners() {
     pullFromServer();
   });
 
-  window.addEventListener('offline', () => {
-    console.log('[sync] Went offline — queuing writes');
-  });
-
   // Pull on tab visibility change (multi-tab sync)
   let lastPull = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       const now = Date.now();
-      if (now - lastPull < 30000) return; // Throttle to 30s
+      if (now - lastPull < 30000) return;
       lastPull = now;
       pullFromServer();
     }
   });
 
-  // Before page unload — ensure sync fires (keepalive)
+  // Best-effort flush on unload.
+  // Note: Firestore writes are async; browsers may cancel them.
   window.addEventListener('beforeunload', () => {
-    const token = getAuthToken();
-    const uid = getCurrentUid();
-    if (!token || !uid) return;
-
-    // Fire-and-forget sync using keepalive fetch
-    loadAllCachedData().then(data => {
-      const payload = JSON.stringify({
-        action: 'save',
-        _token: token,
-        uid,
-        cases: data.cases,
-        documents: data.documents,
-        tasks: data.tasks,
-        timelineEvents: data.timelineEvents,
-        invoices: data.invoices,
-        clients: data.clients,
-        profile: data.profile,
-        chatMessages: data.chatMessages,
-        subscription: data.subscription,
-      });
-      try {
-        fetch(`https://aidraft.bond/api/user-data`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: payload,
-          keepalive: true,
-          credentials: 'include',
-        });
-      } catch { /* best effort */ }
-    });
+    try {
+      if (_currentUid) {
+        // Trigger a debounced flush immediately.
+        schedulePush(0);
+      }
+    } catch {
+      // best-effort
+    }
   });
 }
 
@@ -211,7 +220,7 @@ export function ensureConnectivityListeners() {
   }
 }
 
-/* ─── Public mutation functions ─── */
+/* ─── Public mutation functions (write-through cache + schedule push) ─── */
 
 export async function updateProfile(updates: Partial<ProfileData>): Promise<void> {
   const current = await getMeta('_profileCache');
@@ -238,9 +247,13 @@ export async function addCase(c: CaseItem): Promise<void> {
 
 export async function updateCase(id: string, updates: Partial<CaseItem>): Promise<void> {
   const cases = await (await import('@/lib/db')).getCases();
-  const existing = cases.find(c => c.id === id);
+  const existing = cases.find((c) => c.id === id);
   if (!existing) return;
-  const updated = { ...existing, ...updates, updatedAt: new Date().toISOString() };
+  const updated = {
+    ...existing,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  };
   await putCase(updated);
   schedulePush();
   notifyListeners();
@@ -260,9 +273,13 @@ export async function addClient(c: Client): Promise<void> {
 
 export async function updateClient(id: string, updates: Partial<Client>): Promise<void> {
   const clients = await (await import('@/lib/db')).getClients();
-  const existing = clients.find(c => c.id === id);
+  const existing = clients.find((c) => c.id === id);
   if (!existing) return;
-  const updated = { ...existing, ...updates, updatedAt: new Date().toISOString() };
+  const updated = {
+    ...existing,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  };
   await putClient(updated);
   schedulePush();
   notifyListeners();
@@ -282,7 +299,7 @@ export async function addDocument(d: DocumentItem): Promise<void> {
 
 export async function updateDocument(id: string, updates: Partial<DocumentItem>): Promise<void> {
   const docs = await (await import('@/lib/db')).getDocuments();
-  const existing = docs.find(d => d.id === id);
+  const existing = docs.find((d) => d.id === id);
   if (!existing) return;
   const updated = { ...existing, ...updates };
   await putDocument(updated);
@@ -304,7 +321,7 @@ export async function addTask(t: TaskItem): Promise<void> {
 
 export async function updateTask(id: string, updates: Partial<TaskItem>): Promise<void> {
   const tasks = await (await import('@/lib/db')).getTasks();
-  const existing = tasks.find(t => t.id === id);
+  const existing = tasks.find((t) => t.id === id);
   if (!existing) return;
   const updated = { ...existing, ...updates };
   await putTask(updated);
@@ -326,7 +343,7 @@ export async function addTimelineEvent(e: TimelineEvent): Promise<void> {
 
 export async function updateTimelineEvent(id: string, updates: Partial<TimelineEvent>): Promise<void> {
   const events = await (await import('@/lib/db')).getTimelineEvents();
-  const existing = events.find(e => e.id === id);
+  const existing = events.find((e) => e.id === id);
   if (!existing) return;
   const updated = { ...existing, ...updates };
   await putTimelineEvent(updated);
@@ -348,7 +365,7 @@ export async function addInvoice(inv: InvoiceItem): Promise<void> {
 
 export async function updateInvoice(id: string, updates: Partial<InvoiceItem>): Promise<void> {
   const invoices = await (await import('@/lib/db')).getInvoices();
-  const existing = invoices.find(i => i.id === id);
+  const existing = invoices.find((i) => i.id === id);
   if (!existing) return;
   const updated = { ...existing, ...updates };
   await putInvoice(updated);
@@ -382,25 +399,21 @@ export async function saveSubscription(sub: SubscriptionData): Promise<void> {
 
 /* ─── Initialize sync for a user (called after auth) ─── */
 
-export async function initializeSync(uid: string, token: string): Promise<CachedData> {
+export async function initializeSync(uid: string): Promise<CachedData> {
   ensureConnectivityListeners();
+  _currentUid = uid;
 
-  // First check local cache for instant load
   const cached = await loadAllCachedData();
   const lastSync = await getMeta('lastServerSync');
   const cacheUid = await getMeta('cachedUid');
 
-  // If cache is for a different user, clear it
   if (cacheUid && cacheUid !== uid) {
     await clearAllData();
   }
 
-  // Mark cache ownership
   await setMeta('cachedUid', uid);
 
-  // Pull from server (async — don't block UI)
-  // If no local cache or stale (>5 min), pull immediately
-  const shouldPullImmediately = !lastSync || (Date.now() - lastSync > 5 * 60 * 1000);
+  const shouldPullImmediately = !lastSync || Date.now() - lastSync > 5 * 60 * 1000;
 
   if (shouldPullImmediately) {
     try {
@@ -413,16 +426,13 @@ export async function initializeSync(uid: string, token: string): Promise<Cached
     }
   }
 
-  // Pull in background
   pullFromServer();
-
   return cached;
 }
 
 /* ─── Flush before logout ─── */
 
 export async function flushAndClear(): Promise<void> {
-  // Try to push one last time
   try {
     if (_syncTimer) {
       clearTimeout(_syncTimer);
@@ -433,7 +443,7 @@ export async function flushAndClear(): Promise<void> {
     console.warn('[sync] Final flush failed:', err);
   }
 
-  // Clear local cache
+  _currentUid = null;
   await clearAllData();
   notifyListeners();
 }
