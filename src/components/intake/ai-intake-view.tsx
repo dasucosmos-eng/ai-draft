@@ -181,14 +181,14 @@ export function AiIntakeView() {
 
     // AUTO-TRIGGER: Analyze immediately after upload
     if (newFiles.some(f => f.status === 'done')) {
-      await autoAnalyze(texts);
+      await autoAnalyze(texts, newFiles);
     } else {
       setStage('idle');
     }
   };
 
-  // AUTO-ANALYZE: Called automatically after file upload
-  const autoAnalyze = async (texts?: string[]) => {
+  // AUTO-ANALYZE: Called automatically after file upload, or manually via "Analyze & Auto-Create"
+  const autoAnalyze = async (texts?: string[], newlyUploaded?: UploadedFile[]) => {
     if (!description.trim() && (!texts || texts.length === 0) && uploadedFiles.filter(f => f.status === 'done').length === 0) {
       toast.error('Please upload documents or describe the case');
       setStage('idle');
@@ -253,7 +253,7 @@ export function AiIntakeView() {
 
       // AUTO-CREATE: Automatically create case + client + draft documents
       // Pass the current uploaded files (including newly uploaded ones via ref) to avoid stale closure
-      await autoCreateCaseAndDraft(mergedData, filesContent || (texts || extractedTexts).join('\n\n---\n\n'), [...newFiles]);
+      await autoCreateCaseAndDraft(mergedData, filesContent || (texts || extractedTexts).join('\n\n---\n\n'), newlyUploaded);
     } catch (err: any) {
       setError(err?.message || 'Analysis failed');
       setStage('idle');
