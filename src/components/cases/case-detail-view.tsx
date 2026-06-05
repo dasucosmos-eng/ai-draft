@@ -55,7 +55,7 @@ export function CaseDetailView() {
   const caseTasks = useMemo(() => tasks.filter((t) => t.caseId === selectedCaseId), [tasks, selectedCaseId]);
   const caseEvents = useMemo(() => timelineEvents
     .filter((e) => e.caseId === selectedCaseId)
-    .sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime()),
+    .sort((a, b) => { const da = new Date(a.eventDate || 0).getTime(); const db = new Date(b.eventDate || 0).getTime(); return db - da; }),
     [timelineEvents, selectedCaseId]);
   const caseDocs = useMemo(() => documents.filter((d) => d.caseId === selectedCaseId), [documents, selectedCaseId]);
 

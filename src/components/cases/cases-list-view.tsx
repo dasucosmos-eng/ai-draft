@@ -51,7 +51,7 @@ export function CasesListView() {
     });
   }, [cases, search, statusFilter, typeFilter]);
 
-  const caseTypes = useMemo(() => [...new Set(cases.map((c) => c.caseType))], [cases]);
+  const caseTypes = useMemo(() => [...new Set(cases.map((c) => c.caseType).filter(Boolean))], [cases]);
 
   const handleCreate = () => {
     if (!newCase.title?.trim()) {
