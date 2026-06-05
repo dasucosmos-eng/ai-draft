@@ -101,24 +101,32 @@ export async function checkAndIncrementUsage(uid: string, module: string): Promi
     return { allowed: true, remaining: -1, quota };
   }
 
-  // Atomic increment using Firestore transaction
-  const doc = await usageRef.get();
-  const current = doc.exists ? (doc.data()?.queryCount as number) || 0 : 0;
+  // Atomic increment using Firestore transaction to prevent race conditions
+  let remaining = 0;
+  await db.runTransaction(async (transaction) => {
+    const doc = await transaction.get(usageRef);
+    const current = doc.exists ? (doc.data()?.queryCount as number) || 0 : 0;
 
-  if (current >= quota.maxDailyQueries) {
+    if (current >= quota.maxDailyQueries) {
+      remaining = 0;
+      return; // Abort transaction — quota exceeded
+    }
+
+    remaining = quota.maxDailyQueries - current - 1;
+    transaction.set(usageRef, {
+      uid,
+      date: today,
+      queryCount: current + 1,
+      lastQuery: admin.firestore.Timestamp.now(),
+      modules: admin.firestore.FieldValue.arrayUnion(module),
+    }, { merge: true });
+  });
+
+  if (remaining === 0) {
     return { allowed: false, remaining: 0, quota };
   }
 
-  // Increment
-  await usageRef.set({
-    uid,
-    date: today,
-    queryCount: current + 1,
-    lastQuery: admin.firestore.Timestamp.now(),
-    modules: admin.firestore.FieldValue.arrayUnion(module),
-  }, { merge: true });
-
-  return { allowed: true, remaining: quota.maxDailyQueries - current - 1, quota };
+  return { allowed: true, remaining, quota };
 }
 
 // ─── Feature access check ────────────────────────────────────

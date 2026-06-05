@@ -1,12 +1,9 @@
 // @ts-nocheck
 import { https } from "firebase-functions/v2";
-import { defineSecret } from "firebase-functions/params";
 import { Request, Response } from "express";
 import * as admin from "firebase-admin";
-import jwt from "jsonwebtoken";
 import { restrictedCors } from "./cors";
 import { aiFunctionSecrets } from "./secrets";
-import { parseLLMJSON } from "./parse-json";
 
 
 /* ─── Types ─── */
@@ -51,10 +48,9 @@ interface UserCase {
   updatedAt: string;
 }
 
-/* ─── Verify Token ─── */
+/* ─── Verify Token (Firebase ID Token) ─── */
 
 async function verifyUid(req: Request): Promise<string | null> {
-  const JWT_SECRET = process.env.JWT_SECRET || "aidraft-auth-secret-2026";
   // Support three token sources:
   // 1. Authorization header (standard)
   // 2. req.body.token (explicit body field)
@@ -65,7 +61,7 @@ async function verifyUid(req: Request): Promise<string | null> {
     req.body?._token;
   if (!token) return null;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { uid?: string };
+    const decoded = await admin.auth().verifyIdToken(token);
     return decoded.uid || null;
   } catch {
     return null;
@@ -75,7 +71,7 @@ async function verifyUid(req: Request): Promise<string | null> {
 /* ─── Firestore Helpers ─── */
 
 function userDataRef(uid: string) {
-  return admin.firestore().collection("users").doc(uid).collection("data").doc("app");
+  return admin.firestore().collection("users").doc(uid).collection("app").doc("data");
 }
 
 /* ─── Handler ─── */
@@ -269,18 +265,21 @@ const handler = async (req: Request, res: Response) => {
         const { case: caseItem } = req.body || {};
         if (!caseItem || !caseItem.id) return res.status(400).json({ error: "No case data" });
 
-        // Get current cases array
-        const doc = await userDataRef(uid).get();
-        const currentCases: UserCase[] = doc.exists ? (doc.data()?.cases || []) : [];
-        const idx = currentCases.findIndex((c) => c.id === caseItem.id);
+        // Use Firestore transaction to prevent race conditions on concurrent saves
+        await admin.firestore().runTransaction(async (transaction) => {
+          const docRef = userDataRef(uid);
+          const doc = await transaction.get(docRef);
+          const currentCases: UserCase[] = doc.exists ? (doc.data()?.cases || []) : [];
+          const idx = currentCases.findIndex((c) => c.id === caseItem.id);
 
-        if (idx >= 0) {
-          currentCases[idx] = caseItem;
-        } else {
-          currentCases.unshift(caseItem);
-        }
+          if (idx >= 0) {
+            currentCases[idx] = caseItem;
+          } else {
+            currentCases.unshift(caseItem);
+          }
 
-        await userDataRef(uid).set({ cases: currentCases, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          transaction.set(docRef, { cases: currentCases, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        });
         return res.json({ success: true });
       }
 
@@ -288,16 +287,20 @@ const handler = async (req: Request, res: Response) => {
         const { caseId } = req.body || {};
         if (!caseId) return res.status(400).json({ error: "No case ID" });
 
-        const doc = await userDataRef(uid).get();
-        const currentCases: UserCase[] = doc.exists ? (doc.data()?.cases || []) : [];
-        const filtered = currentCases.filter((c) => c.id !== caseId);
+        // Use Firestore transaction to prevent race conditions
+        await admin.firestore().runTransaction(async (transaction) => {
+          const docRef = userDataRef(uid);
+          const doc = await transaction.get(docRef);
+          const currentCases: UserCase[] = doc.exists ? (doc.data()?.cases || []) : [];
+          const filtered = currentCases.filter((c) => c.id !== caseId);
 
-        await userDataRef(uid).set({ cases: filtered, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          transaction.set(docRef, { cases: filtered, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        });
         return res.json({ success: true });
       }
 
       default:
-        return res.status(400).json({ error: `Unknown action: ${action}` });
+        return res.status(400).json({ error: "Unknown action" });
     }
   } catch (err) {
     console.error("[user-data] Error:", err);

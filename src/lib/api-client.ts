@@ -1,3 +1,5 @@
+import { getFirebaseAuth } from '@/lib/firebase';
+
 export function getApiBaseUrl(): string {
   return 'https://aidraft.bond/api';
 }
@@ -23,6 +25,18 @@ export function setCurrentUid(uid: string): void {
 export function clearAuth(): void {
   localStorage.removeItem('aidraft_auth_token');
   localStorage.removeItem('aidraft_current_uid');
+}
+
+export async function getFirebaseIdToken(forceRefresh: boolean = false): Promise<string | null> {
+  try {
+    if (typeof window === 'undefined') return null;
+    const auth = getFirebaseAuth();
+    const user = auth.currentUser;
+    if (!user) return getAuthToken(); // fallback to localStorage
+    return await user.getIdToken(forceRefresh);
+  } catch {
+    return getAuthToken(); // fallback to localStorage
+  }
 }
 
 export async function apiCall(endpoint: string, body: any, token?: string): Promise<any> {

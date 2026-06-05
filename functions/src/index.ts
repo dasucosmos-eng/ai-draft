@@ -29,15 +29,15 @@ export { apiAiExtractData } from "./ai-extract-data";
 export { apiRazorpayCreateOrder } from "./razorpay";
 export { apiRazorpayVerify } from "./razorpay";
 
-// Custom Auth (works without Identity Platform)
-export { authGoogleUrl } from "./custom-auth";
-export { authGoogleCallback } from "./custom-auth";
-export { authGoogle } from "./custom-auth";
-export { authEmailSignup } from "./custom-auth";
-export { authEmailSignin } from "./custom-auth";
-export { authPhoneSend } from "./custom-auth";
-export { authPhoneVerify } from "./custom-auth";
-export { authVerify } from "./custom-auth";
+// Firebase Authentication (migrated from custom JWT auth)
+export { authGoogleUrl } from "./firebase-auth";
+export { authGoogleCallback } from "./firebase-auth";
+export { authGoogle } from "./firebase-auth";
+export { authEmailSignup } from "./firebase-auth";
+export { authEmailSignin } from "./firebase-auth";
+export { authPhoneSend } from "./firebase-auth";
+export { authPhoneVerify } from "./firebase-auth";
+export { authVerify } from "./firebase-auth";
 export { apiUserData } from './user-data';
 
 

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { parseLLMJSON } from "./parse-json";
 import { aiFunctionSecrets } from "./secrets";
+import * as admin from "firebase-admin";
 // ai-litigation — Firebase Cloud Function
 // AI-powered litigation tools with REAL legal citations from Indian Kanoon + web search
 // Each tool (Argument Builder, Injunction Generator, etc.) performs legal search AND generates AI analysis
@@ -276,6 +277,19 @@ export const apiAiLitigation = https.onRequest(
     return corsHandler(req, res, async () => {
       if (req.method !== "POST") {
         res.status(405).json({ error: "Method not allowed" });
+        return;
+      }
+      const authToken = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+      if (!authToken) {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+      let uid: string;
+      try {
+        const decoded = await admin.auth().verifyIdToken(authToken);
+        uid = decoded.uid;
+      } catch {
+        res.status(401).json({ error: "Invalid or expired token" });
         return;
       }
       try {

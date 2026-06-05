@@ -26,7 +26,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 import type { CaseItem } from '@/lib/types';
 
 export function CasesListView() {
@@ -45,7 +45,7 @@ export function CasesListView() {
 
   const filtered = useMemo(() => {
     return cases.filter((c) => {
-      if (search && !c.title.toLowerCase().includes(search.toLowerCase()) && !c.caseNumber?.toLowerCase().includes(search.toLowerCase())) return false;
+      if (search && !c.title?.toLowerCase().includes(search.toLowerCase()) && !c.caseNumber?.toLowerCase().includes(search.toLowerCase())) return false;
       if (statusFilter !== 'all' && c.status !== statusFilter) return false;
       if (typeFilter !== 'all' && c.caseType !== typeFilter) return false;
       return true;
@@ -211,7 +211,7 @@ export function CasesListView() {
                           {c.nextHearing && (
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                               <Calendar className="h-3 w-3" />
-                              {format(new Date(c.nextHearing), 'MMM dd, yyyy')}
+                              {safeFormat(c.nextHearing, 'MMM dd, yyyy')}
                             </span>
                           )}
                         </div>

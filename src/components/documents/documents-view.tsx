@@ -9,8 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
-import { format } from 'date-fns';
+import { cn, safeFormat } from '@/lib/utils';
 import {
   Files, Search, Plus, FileText, Trash2, Eye, Download, Filter,
 } from 'lucide-react';
@@ -115,7 +114,7 @@ export function DocumentsView() {
                       <span>•</span>
                       <span>{doc.category}</span>
                       <span>•</span>
-                      <span>{format(new Date(doc.createdAt), 'dd MMM yyyy')}</span>
+                      <span>{safeFormat(doc.createdAt, 'dd MMM yyyy')}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">

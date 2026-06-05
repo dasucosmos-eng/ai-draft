@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { parseLLMJSON } from "./parse-json";
 import { aiFunctionSecrets } from "./secrets";
+import * as admin from "firebase-admin";
 // ai-civil — Firebase Cloud Function
 // AI-powered Civil Original Side drafting module for AI Draft legal platform
 // Generates Plaints, Written Statements, Injunction IAs, Written Arguments,
@@ -466,6 +467,19 @@ export const apiAiCivil = https.onRequest(
     return corsHandler(req, res, async () => {
       if (req.method !== "POST") {
         res.status(405).json({ error: "Method not allowed" });
+        return;
+      }
+      const authToken = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+      if (!authToken) {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+      let uid: string;
+      try {
+        const decoded = await admin.auth().verifyIdToken(authToken);
+        uid = decoded.uid;
+      } catch {
+        res.status(401).json({ error: "Invalid or expired token" });
         return;
       }
       try {

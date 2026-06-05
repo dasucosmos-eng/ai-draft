@@ -11,9 +11,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { v4 as uuidv4 } from 'uuid';
-import { format } from 'date-fns';
 import { Receipt, Plus, Search, IndianRupee, Trash2, CheckCircle2, FileText } from 'lucide-react';
 import { generatePDF, downloadPDF } from '@/lib/pdf-generator';
+import { safeFormat } from '@/lib/utils';
 
 export function BillingView() {
   const invoices = useDataStore((s) => s.invoices);
@@ -72,8 +72,8 @@ export function BillingView() {
   const handleDownloadInvoice = (inv: any) => {
     const content = `
 INVOICE: ${inv.invoiceNumber}
-Date: ${format(new Date(inv.issuedDate), 'dd MMM yyyy')}
-Due Date: ${format(new Date(inv.dueDate), 'dd MMM yyyy')}
+Date: ${safeFormat(inv.issuedDate, 'dd MMM yyyy')}
+Due Date: ${safeFormat(inv.dueDate, 'dd MMM yyyy')}
 
 ${inv.caseTitle ? `Case: ${inv.caseTitle}` : ''}
 ${inv.description ? `\n${inv.description}` : ''}
@@ -83,7 +83,7 @@ GST (${inv.gstAmount > 0 ? '18%' : '0%'}): ₹${inv.gstAmount.toLocaleString()}
 Total: ₹${inv.totalAmount.toLocaleString()}
 
 Status: ${inv.status.toUpperCase()}
-${inv.paidDate ? `Paid on: ${format(new Date(inv.paidDate), 'dd MMM yyyy')}` : ''}
+${inv.paidDate ? `Paid on: ${safeFormat(inv.paidDate, 'dd MMM yyyy')}` : ''}
     `.trim();
     const doc = generatePDF(content, `Invoice ${inv.invoiceNumber}`);
     downloadPDF(doc, `${inv.invoiceNumber}.pdf`);
@@ -164,8 +164,8 @@ ${inv.paidDate ? `Paid on: ${format(new Date(inv.paidDate), 'dd MMM yyyy')}` : '
                     </div>
                     {inv.caseTitle && <p className="text-xs text-muted-foreground truncate mt-0.5">{inv.caseTitle}</p>}
                     <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                      <span>Issued: {format(new Date(inv.issuedDate), 'dd MMM yyyy')}</span>
-                      <span>Due: {format(new Date(inv.dueDate), 'dd MMM yyyy')}</span>
+                      <span>Issued: {safeFormat(inv.issuedDate, 'dd MMM yyyy')}</span>
+                      <span>Due: {safeFormat(inv.dueDate, 'dd MMM yyyy')}</span>
                     </div>
                   </div>
                   <p className="text-sm font-semibold">₹{inv.totalAmount.toLocaleString()}</p>

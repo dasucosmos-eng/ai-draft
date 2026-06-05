@@ -24,8 +24,8 @@ export async function aiLitigation(toolType: string, input: any) {
   return apiCall('/ai-litigation', { toolType, input }, getAuthToken() || undefined);
 }
 
-export async function aiExtractFile(fileContent: string, fileName: string, mimeType: string) {
-  return apiCall('/ai-extract-file', { fileContent, fileName, mimeType }, getAuthToken() || undefined);
+export async function aiExtractFile(fileData: string, fileName: string, mimeType: string) {
+  return apiCall('/ai-extract-file', { fileData, fileName, mimeType }, getAuthToken() || undefined);
 }
 
 export async function aiExtractData(text: string, extractionType: string) {

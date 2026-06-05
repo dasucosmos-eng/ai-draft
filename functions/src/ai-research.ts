@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { aiFunctionSecrets } from "./secrets";
+import * as admin from "firebase-admin";
 // ai-research — Firebase Cloud Function (v6 — FULL pipeline, AI via Gemini (direct API))
 // 
 // ARCHITECTURE:
@@ -29,6 +30,19 @@ export const apiAiResearch = https.onRequest(
     return corsHandler(req, res, async () => {
       if (req.method !== "POST") {
         res.status(405).json({ error: "Method not allowed" });
+        return;
+      }
+      const authToken = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+      if (!authToken) {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+      let uid: string;
+      try {
+        const decoded = await admin.auth().verifyIdToken(authToken);
+        uid = decoded.uid;
+      } catch {
+        res.status(401).json({ error: "Invalid or expired token" });
         return;
       }
       try {

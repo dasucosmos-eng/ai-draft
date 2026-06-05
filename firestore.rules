@@ -2,13 +2,34 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Cloud Functions use admin SDK which bypasses rules.
-    // For direct client access (if any), require auth matching the uid.
+    // For direct client access (if any), require Firebase Auth matching the uid.
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
     match /users/{uid}/data/{doc} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Allow authenticated users to read/write their own app data
+    match /users/{uid}/app/data {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Usage tracking (written by Cloud Functions, read by users)
+    match /usage/{doc} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Phone OTP collection (legacy — can be removed after migration)
+    match /phone_otps/{doc} {
+      allow read, write: if false;
+    }
+
+    // OAuth states collection (legacy — can be removed after migration)
+    match /oauth_states/{doc} {
+      allow read, write: if false;
     }
 
     // Deny all other access by default

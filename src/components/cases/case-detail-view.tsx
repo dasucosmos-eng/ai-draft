@@ -18,8 +18,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { v4 as uuidv4 } from 'uuid';
-import { cn } from '@/lib/utils';
-import { format } from 'date-fns';
+import { cn, safeFormat } from '@/lib/utils';
 import {
   ArrowLeft, Briefcase, Calendar, MapPin, User, Users, Hash,
   Plus, CheckCircle2, Circle, Trash2, Clock, Edit, Save, X,
@@ -262,8 +261,8 @@ export function CaseDetailView() {
                   <InfoRow icon={Clock} label="Priority" value={caseData.priority} badge color={priorityColor(caseData.priority)} />
                   <InfoRow icon={Building} label="Court" value={caseData.courtName} />
                   <InfoRow icon={Gavel} label="Judge" value={caseData.judgeName} />
-                  <InfoRow icon={Calendar} label="Filing Date" value={caseData.filingDate ? format(new Date(caseData.filingDate), 'dd MMM yyyy') : ''} />
-                  <InfoRow icon={Calendar} label="Next Hearing" value={caseData.nextHearing ? format(new Date(caseData.nextHearing), 'dd MMM yyyy') : ''} />
+                  <InfoRow icon={Calendar} label="Filing Date" value={caseData.filingDate ? safeFormat(caseData.filingDate, 'dd MMM yyyy') : ''} />
+                  <InfoRow icon={Calendar} label="Next Hearing" value={caseData.nextHearing ? safeFormat(caseData.nextHearing, 'dd MMM yyyy') : ''} />
                   <InfoRow icon={User} label="Client" value={caseData.clientName} />
                   <InfoRow icon={Phone} label="Client Phone" value={caseData.clientPhone} />
                   <InfoRow icon={Mail} label="Client Email" value={caseData.clientEmail} />
@@ -335,7 +334,7 @@ export function CaseDetailView() {
                             </div>
                           </div>
                           {event.description && <p className="text-xs text-muted-foreground mt-0.5">{event.description}</p>}
-                          <p className="text-[10px] text-muted-foreground mt-1">{format(new Date(event.eventDate), 'dd MMM yyyy, h:mm a')}</p>
+                          <p className="text-[10px] text-muted-foreground mt-1">{safeFormat(event.eventDate, 'dd MMM yyyy, h:mm a')}</p>
                         </div>
                       </div>
                     ))}
@@ -369,7 +368,7 @@ export function CaseDetailView() {
                         <p className="text-sm font-medium truncate">{doc.name}</p>
                         <p className="text-[10px] text-muted-foreground">{doc.type} • {doc.category}</p>
                       </div>
-                      <Badge variant="outline" className="text-[10px]">{format(new Date(doc.createdAt), 'dd MMM yyyy')}</Badge>
+                      <Badge variant="outline" className="text-[10px]">{safeFormat(doc.createdAt, 'dd MMM yyyy')}</Badge>
                     </div>
                   ))}
                 </div>
@@ -409,7 +408,7 @@ export function CaseDetailView() {
                       <div className="flex-1 min-w-0">
                         <p className={cn('text-sm', task.status === 'completed' && 'line-through')}>{task.title}</p>
                         {task.dueDate && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5">Due: {format(new Date(task.dueDate), 'dd MMM yyyy')}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">Due: {safeFormat(task.dueDate, 'dd MMM yyyy')}</p>
                         )}
                       </div>
                       <Badge variant="outline" className={cn('text-[10px]', priorityColor(task.priority))}>{task.priority}</Badge>

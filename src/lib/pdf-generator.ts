@@ -10,7 +10,7 @@ export function generatePDF(content: string, title: string): jsPDF {
   let y = 20;
 
   // Letterhead
-  if (profile.firmName || profile.fullName) {
+  if (profile && (profile.firmName || profile.fullName)) {
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
     doc.text(profile.firmName || profile.fullName, margin, y);
@@ -65,7 +65,7 @@ export function generatePDF(content: string, title: string): jsPDF {
     doc.setPage(i);
     doc.setFontSize(8);
     doc.setTextColor(130);
-    const stampLine = profile.stampLine ? ` | ${profile.stampLine}` : '';
+    const stampLine = profile?.stampLine ? ` | ${profile.stampLine}` : '';
     doc.text(`Page ${i} of ${pageCount}${stampLine}`, pageWidth / 2, 287, { align: 'center' });
   }
 

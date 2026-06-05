@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,6 +73,38 @@ interface GeneratedDraft {
 
 type IntakeStage = 'idle' | 'uploading' | 'analyzing' | 'extracted' | 'creating-case' | 'drafting' | 'complete';
 
+// Generate a markdown summary from extracted case data
+function generateSummary(data: ExtractedCaseData): string {
+  const lines: string[] = [];
+  if (data.caseType) lines.push(`**Case Type:** ${data.caseType}${data.subType ? ` (${data.subType})` : ''}`);
+  if (data.clientName) lines.push(`**Client:** ${data.clientName}${data.clientPhone ? ` - ${data.clientPhone}` : ''}${data.clientEmail ? ` - ${data.clientEmail}` : ''}`);
+  if (data.opposingParty) lines.push(`**Opposing Party:** ${data.opposingParty}${data.opposingPartyAddress ? ` - ${data.opposingPartyAddress}` : ''}`);
+  if (data.accusedName) lines.push(`**Accused:** ${data.accusedName}${data.accusedPhone ? ` - ${data.accusedPhone}` : ''}`);
+  if (data.courtName) lines.push(`**Court:** ${data.courtName}`);
+  if (data.jurisdiction) lines.push(`**Jurisdiction:** ${data.jurisdiction}`);
+  if (data.firNumber) lines.push(`**FIR:** ${data.firNumber}${data.policeStation ? ` - ${data.policeStation}` : ''}`);
+  if (data.sections && data.sections.length > 0) lines.push(`**Sections:** ${data.sections.join(', ')}`);
+  if (data.priority) lines.push(`**Priority:** ${data.priority.toUpperCase()}`);
+  if (data.causeOfAction) lines.push(`\n**Cause of Action:**\n${data.causeOfAction}`);
+  if (data.reliefSought) lines.push(`\n**Relief Sought:**\n${data.reliefSought}`);
+  if (data.facts) lines.push(`\n**Facts:**\n${data.facts}`);
+  if (data.suggestedDocuments && data.suggestedDocuments.length > 0) {
+    lines.push(`\n**Suggested Documents (${data.suggestedDocuments.length}):**`);
+    data.suggestedDocuments.forEach((doc, i) => {
+      lines.push(`${i + 1}. ${doc.name} (${doc.type})`);
+    });
+  }
+  if (data.nextSteps && data.nextSteps.length > 0) {
+    lines.push(`\n**Next Steps:**`);
+    data.nextSteps.forEach((step) => {
+      const action = typeof step === 'string' ? step : step.action;
+      const timeline = typeof step === 'object' && step.timeline ? ` (${step.timeline})` : '';
+      lines.push(`- ${action}${timeline}`);
+    });
+  }
+  return lines.length > 0 ? lines.join('\n') : 'No summary data available yet. Upload documents or describe the case to begin analysis.';
+}
+
 export function AiIntakeView() {
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
@@ -99,6 +131,7 @@ export function AiIntakeView() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerContent, setViewerContent] = useState('');
   const [viewerTitle, setViewerTitle] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
 
   // FILE UPLOAD with auto-trigger analysis
   const handleFilesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,35 +212,38 @@ export function AiIntakeView() {
 
       setProgress(70);
       setResult(res);
-      const extracted = res.extracted || res.data || res.data?.extractedInfo || {};
-      const classification = res.data?.caseClassification || extracted.caseClassification || {};
-      
+
+      // Backend returns: { data: { caseClassification, extractedInfo, suggestedDocuments, nextSteps }, _provider }
+      const aiData = res.data || {};
+      const extracted = aiData.extractedInfo || {};
+      const classification = aiData.caseClassification || {};
+
       // Merge extracted data from both sources
       const mergedData: ExtractedCaseData = {
-        caseTitle: extracted.caseTitle || classification.caseType || res.data?.caseClassification?.caseType,
-        caseType: classification.caseType || extracted.caseType,
-        subType: classification.subType || extracted.subType,
-        clientName: extracted.clientName || extracted.parties?.[0]?.name || '',
-        clientPhone: extracted.phone || extracted.parties?.[0]?.phone || '',
-        clientEmail: extracted.email || extracted.parties?.[0]?.email || '',
-        clientAddress: extracted.addresses || extracted.parties?.[0]?.address || '',
-        opposingParty: extracted.opposingParty || extracted.opposingParties?.[0]?.name || '',
+        caseTitle: extracted.caseTitle || classification.caseType || '',
+        caseType: classification.caseType || extracted.caseType || '',
+        subType: classification.subType || extracted.subType || '',
+        clientName: extracted.parties?.[0]?.name || extracted.clientName || '',
+        clientPhone: extracted.parties?.[0]?.phone || extracted.phone || '',
+        clientEmail: extracted.parties?.[0]?.email || extracted.email || '',
+        clientAddress: extracted.parties?.[0]?.address || extracted.addresses || '',
+        opposingParty: extracted.opposingParties?.[0]?.name || extracted.opposingParty || '',
         opposingPartyAddress: extracted.opposingParties?.[0]?.address || '',
         accusedName: extracted.accusedName || '',
         accusedPhone: extracted.accusedPhone || '',
         accusedAddress: extracted.accusedAddress || '',
-        victimNames: extracted.victimNames || [],
-        sections: classification.relevantSections || extracted.underSections || extracted.sections || [],
-        causeOfAction: extracted.causeOfAction || extracted.caseDetails?.causeOfAction || '',
-        reliefSought: extracted.reliefSought || extracted.caseDetails?.reliefSought || '',
-        firNumber: extracted.firNumber || extracted.caseDetails?.firNumber || '',
-        policeStation: extracted.policeStation || extracted.caseDetails?.policeStation || '',
-        courtName: classification.courtName || extracted.courtName || '',
+        victimNames: extracted.victims || [],
+        sections: classification.relevantSections || extracted.caseDetails?.underSections || extracted.sections || [],
+        causeOfAction: extracted.caseDetails?.causeOfAction || extracted.causeOfAction || '',
+        reliefSought: extracted.caseDetails?.reliefSought || extracted.reliefSought || '',
+        firNumber: extracted.caseDetails?.firNumber || extracted.firNumber || '',
+        policeStation: extracted.caseDetails?.policeStation || extracted.policeStation || '',
+        courtName: classification.courtName || extracted.caseDetails?.courtName || '',
         jurisdiction: classification.jurisdiction || extracted.jurisdiction || '',
-        facts: Array.isArray(extracted.facts) ? extracted.facts.join('\n') : extracted.facts || extracted.caseDetails?.facts?.join('\n') || '',
+        facts: Array.isArray(extracted.caseDetails?.facts) ? extracted.caseDetails.facts.join('\n') : extracted.facts || '',
         priority: classification.priority || 'medium',
-        suggestedDocuments: res.data?.suggestedDocuments || res.suggestedDocuments || [],
-        nextSteps: res.data?.nextSteps || res.suggestedNextSteps?.map((s: string, i: number) => ({ step: i + 1, action: s, timeline: '' })) || [],
+        suggestedDocuments: aiData.suggestedDocuments || [],
+        nextSteps: aiData.nextSteps || [],
       };
       
       setExtractedData(mergedData);
@@ -216,7 +252,8 @@ export function AiIntakeView() {
       setStage('extracted');
 
       // AUTO-CREATE: Automatically create case + client + draft documents
-      await autoCreateCaseAndDraft(mergedData, filesContent || (texts || extractedTexts).join('\n\n---\n\n'));
+      // Pass the current uploaded files (including newly uploaded ones via ref) to avoid stale closure
+      await autoCreateCaseAndDraft(mergedData, filesContent || (texts || extractedTexts).join('\n\n---\n\n'), [...newFiles]);
     } catch (err: any) {
       setError(err?.message || 'Analysis failed');
       setStage('idle');
@@ -226,7 +263,7 @@ export function AiIntakeView() {
   };
 
   // AUTO-CREATE CASE + CLIENT + DRAFT ALL DOCUMENTS
-  const autoCreateCaseAndDraft = async (data: ExtractedCaseData, fileContent: string) => {
+  const autoCreateCaseAndDraft = async (data: ExtractedCaseData, fileContent: string, currentNewFiles?: UploadedFile[]) => {
     setStage('creating-case');
     setProgress(85);
     setProgressLabel('Creating case and client...');
@@ -289,7 +326,9 @@ export function AiIntakeView() {
       setCreatedCaseId(caseId);
 
       // Save uploaded files as documents
-      uploadedFiles.filter((f) => f.status === 'done').forEach((f) => {
+      // Use currentNewFiles (from current upload) + existing uploadedFiles to avoid stale closure
+      const filesToSave = currentNewFiles || uploadedFiles;
+      filesToSave.filter((f) => f.status === 'done').forEach((f) => {
         addDocument({
           id: uuidv4(),
           name: f.name,
@@ -303,6 +342,10 @@ export function AiIntakeView() {
 
       // 3. AUTO-DRAFT ALL suggested documents
       if (data.suggestedDocuments && data.suggestedDocuments.length > 0) {
+        // Create abort controller so drafting can be cancelled on unmount/reset
+        const abortController = new AbortController();
+        abortRef.current = abortController;
+
         setStage('drafting');
         setProgressLabel(`Generating ${data.suggestedDocuments.length} documents...`);
         
@@ -310,6 +353,8 @@ export function AiIntakeView() {
         // to avoid hitting API rate limits
         const completedDrafts: GeneratedDraft[] = [];
         for (let idx = 0; idx < data.suggestedDocuments.length; idx++) {
+          // Check if drafting was cancelled
+          if (abortController.signal.aborted) break;
           const doc = data.suggestedDocuments[idx];
           if (idx > 0) {
             // Wait 3 seconds between documents to avoid rate limits
@@ -332,25 +377,18 @@ export function AiIntakeView() {
               extractedText: fileContent || '',
             };
 
-            // Route to specialized endpoints
-            const criminalTypes = ['bail', 'anticipatory bail', 'criminal', 'fir', 'crlmp', 'acquittal', 'conviction', 'remission'];
-            const civilTypes = ['plaint', 'suit', 'injunction', 'execution', 'attachment', 'revision', 'appeal', 'counter', 'rejoinder', 'written statement', 'petition'];
-            const familyTypes = ['divorce', 'hmop', 'guardian', 'succession', 'maintenance', 'custody', 'domestic violence', 'mvop', 'motor accident'];
-
-            if (criminalTypes.some(t => doc.name.toLowerCase().includes(t) || doc.type?.toLowerCase().includes(t))) {
-              endpoint = '/ai-criminal';
-              body.task = 'generateDocument';
-            } else if (familyTypes.some(t => doc.name.toLowerCase().includes(t) || doc.type?.toLowerCase().includes(t))) {
-              endpoint = '/ai-family';
-              body.task = 'generateDocument';
-            } else if (civilTypes.some(t => doc.name.toLowerCase().includes(t) || doc.type?.toLowerCase().includes(t))) {
-              endpoint = '/ai-civil';
-              body.task = 'generateDocument';
-            }
+            // NOTE: Do NOT route to specialized endpoints (ai-criminal, ai-civil, ai-family)
+            // here. Those require specific structured input (bailType, matterFacts, etc.)
+            // that the intake auto-draft doesn't provide. They don't support a generic
+            // 'generateDocument' task. Use /ai-draft which accepts generic documentType + details.
 
             const token = getAuthToken();
             const draftRes = await apiCall(endpoint, body, token || undefined);
-            const content = draftRes.content || draftRes.responseText || draftRes.draft || JSON.stringify(draftRes, null, 2);
+            // Handle response format: { success, data: { content } } or { content }
+            const content = draftRes.data?.content || draftRes.content || draftRes.responseText || draftRes.draft || '';
+            if (!content) {
+              throw new Error('Empty response from drafting endpoint');
+            }
 
             // Save the generated document to the case
             addDocument({
@@ -404,11 +442,13 @@ export function AiIntakeView() {
   };
 
   const handleDownloadDOC = (draft: GeneratedDraft) => {
+    // Escape HTML to prevent XSS from AI-generated content
+    const escapeHtml = (str: string) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const htmlContent = `
       <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-      <head><meta charset='utf-8'><title>${draft.name}</title>
+      <head><meta charset='utf-8'><title>${escapeHtml(draft.name)}</title>
       <style>body{font-family:Times New Roman,serif;font-size:12pt;line-height:1.6;margin:1in;}h1{font-size:16pt;font-weight:bold;}h2{font-size:14pt;font-weight:bold;}</style></head>
-      <body>${draft.content.replace(/\n/g, '<br>')}</body></html>`;
+      <body>${escapeHtml(draft.content).replace(/\n/g, '<br>')}</body></html>`;
     const blob = new Blob([htmlContent], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -420,6 +460,11 @@ export function AiIntakeView() {
   };
 
   const resetIntake = () => {
+    // Cancel any in-progress drafting
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
     setDescription('');
     setResult(null);
     setError('');
@@ -451,6 +496,14 @@ export function AiIntakeView() {
           Upload documents or describe the case. AI handles everything autonomously — extraction, classification, case creation, and document drafting.
         </p>
       </div>
+
+      {/* Document Viewer Modal */}
+      <DocumentViewer
+        open={viewerOpen}
+        onOpenChange={setViewerOpen}
+        title={viewerTitle}
+        content={viewerContent}
+      />
 
       {/* Autonomous Progress Bar */}
       {stage !== 'idle' && (
@@ -606,7 +659,7 @@ export function AiIntakeView() {
                 </CardHeader>
                 <CardContent>
                   <ScrollArea className="max-h-96">
-                    <MarkdownContent content={result.summary || result.data?.summary || 'No summary available.'} />
+                    <MarkdownContent content={generateSummary(extractedData)} />
                   </ScrollArea>
                 </CardContent>
               </Card>

@@ -23,19 +23,20 @@ const MAX_FILE_SIZE: Record<string, number> = {
   enterprise: 100 * 1024 * 1024, // 100MB per file
 };
 
-// ─── JWT Verification (same as user-data.ts) ───
-import jwt from "jsonwebtoken";
+// ─── Firebase ID Token Verification ───
 
 async function verifyUid(req: any): Promise<string | null> {
-  const JWT_SECRET = process.env.JWT_SECRET || "aidraft-auth-secret-2026";
-  // BUG #15 FIX: Also check req.body._token (sendBeacon fallback), same as user-data.ts
+  // Support three token sources:
+  // 1. Authorization header (standard)
+  // 2. req.body.token (explicit body field)
+  // 3. req.body._token (fallback for sendBeacon which can't set headers)
   const token =
     (req.headers.authorization || "").replace("Bearer ", "") ||
     req.body?.token ||
     req.body?._token;
   if (!token) return null;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { uid?: string };
+    const decoded = await admin.auth().verifyIdToken(token);
     return decoded.uid || null;
   } catch {
     return null;
@@ -151,7 +152,8 @@ export const fileDelete = https.onRequest(
         }
 
         // Only allow deleting files under user's directory
-        if (!filePath.startsWith(`users/${uid}/`)) {
+        // Block path traversal attempts (e.g., users/uid/../other_uid/file)
+        if (!filePath.startsWith(`users/${uid}/`) || filePath.includes('..')) {
           return res.status(403).json({ error: "Cannot delete files outside your directory" });
         }
 

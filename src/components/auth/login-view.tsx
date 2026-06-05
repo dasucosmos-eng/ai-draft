@@ -68,8 +68,7 @@ export function LoginView() {
     }
     setLoading(true);
     try {
-      const result = await phoneSendOtp(phoneNumber);
-      setSessionId(result.sessionId);
+      await phoneSendOtp(phoneNumber);
       setOtpSent(true);
       toast.success('OTP sent successfully');
     } catch (err: any) {
@@ -85,7 +84,7 @@ export function LoginView() {
     }
     setLoading(true);
     try {
-      await phoneVerifyOtp(phoneNumber, otp, sessionId);
+      await phoneVerifyOtp(phoneNumber, otp);
       toast.success('Phone verified successfully!');
     } catch (err: any) {
       toast.error(err?.message || 'OTP verification failed');
@@ -352,6 +351,8 @@ export function LoginView() {
           <a href="/privacy-policy/" className="text-primary hover:underline">Privacy Policy</a>
         </motion.p>
       </motion.div>
+      {/* Hidden reCAPTCHA container for Firebase Phone Auth */}
+      <div id="recaptcha-container" className="hidden" />
     </div>
   );
 }

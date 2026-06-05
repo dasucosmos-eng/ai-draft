@@ -1,12 +1,12 @@
 // @ts-nocheck
 import { aiFunctionSecrets } from "./secrets";
+import * as admin from "firebase-admin";
 // ai-document — Firebase Cloud Function
 // Analyzes legal documents using Sarvam → Groq → Gemini fallback
 // Returns: { summary, keyClauses, riskPoints, missingElements, deadlines, parties, suggestedActions, documentLanguage }
 
 import { https } from "firebase-functions/v2";
 import { restrictedCors } from "./cors";
-import { stripMarkdownFromData } from "./utils";
 import { callSarvamStructured } from "./sarvam-client";
 import { callGroqStructured, logUsage } from "./groq-client";
 import { callGeminiText } from "./gemini-client";
@@ -46,6 +46,19 @@ export const apiAiDocument = https.onRequest(
     return corsHandler(req, res, async () => {
       if (req.method !== "POST") {
         res.status(405).json({ error: "Method not allowed" });
+        return;
+      }
+      const authToken = (req.headers.authorization || "").replace("Bearer ", "") || req.body?.token;
+      if (!authToken) {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+      let uid: string;
+      try {
+        const decoded = await admin.auth().verifyIdToken(authToken);
+        uid = decoded.uid;
+      } catch {
+        res.status(401).json({ error: "Invalid or expired token" });
         return;
       }
       try {
@@ -112,7 +125,6 @@ export const apiAiDocument = https.onRequest(
         console.error("[ai-document] Error:", error);
         res.status(500).json({
           error: "Failed to analyze document",
-          details: error instanceof Error ? error.message : String(error),
         });
       }
     });

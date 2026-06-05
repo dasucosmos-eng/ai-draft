@@ -301,7 +301,7 @@ export async function updateDocument(id: string, updates: Partial<DocumentItem>)
   const docs = await (await import('@/lib/db')).getDocuments();
   const existing = docs.find((d) => d.id === id);
   if (!existing) return;
-  const updated = { ...existing, ...updates };
+  const updated = { ...existing, ...updates, updatedAt: new Date().toISOString() };
   await putDocument(updated);
   schedulePush();
   notifyListeners();
@@ -345,7 +345,7 @@ export async function updateTimelineEvent(id: string, updates: Partial<TimelineE
   const events = await (await import('@/lib/db')).getTimelineEvents();
   const existing = events.find((e) => e.id === id);
   if (!existing) return;
-  const updated = { ...existing, ...updates };
+  const updated = { ...existing, ...updates, updatedAt: new Date().toISOString() };
   await putTimelineEvent(updated);
   schedulePush();
   notifyListeners();

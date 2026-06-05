@@ -12,8 +12,7 @@ import {
   FilePlus, FileText, Search, ArrowRight, TrendingUp,
   CheckCircle2, Circle, ListTodo
 } from 'lucide-react';
-import { format } from 'date-fns';
-import { cn } from '@/lib/utils';
+import { cn, safeFormat } from '@/lib/utils';
 
 export function DashboardView() {
   const cases = useDataStore((s) => s.cases);
@@ -197,10 +196,10 @@ export function DashboardView() {
                     <div key={event.id} className="flex items-start gap-3 rounded-lg p-3">
                       <div className="flex flex-col items-center justify-center h-9 w-9 rounded-lg bg-purple-500/10 shrink-0">
                         <span className="text-[10px] font-medium text-purple-500">
-                          {format(new Date(event.eventDate), 'MMM')}
+                          {safeFormat(event.eventDate, 'MMM')}
                         </span>
                         <span className="text-xs font-bold text-purple-500">
-                          {format(new Date(event.eventDate), 'dd')}
+                          {safeFormat(event.eventDate, 'dd')}
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
@@ -217,7 +216,7 @@ export function DashboardView() {
                             </Badge>
                           )}
                           <span className="text-[10px] text-muted-foreground">
-                            {format(new Date(event.eventDate), 'h:mm a')}
+                            {safeFormat(event.eventDate, 'h:mm a')}
                           </span>
                         </div>
                       </div>
