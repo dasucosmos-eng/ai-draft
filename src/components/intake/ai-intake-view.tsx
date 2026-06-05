@@ -131,7 +131,12 @@ export function AiIntakeView() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerContent, setViewerContent] = useState('');
   const [viewerTitle, setViewerTitle] = useState('');
+  const [editDraftOpen, setEditDraftOpen] = useState(false);
+  const [editDraftIdx, setEditDraftIdx] = useState(-1);
+  const [editDraftContent, setEditDraftContent] = useState('');
+  const [editDraftTitle, setEditDraftTitle] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+  const updateDocument = useDataStore((s) => s.updateDocument);
 
   // FILE UPLOAD with auto-trigger analysis
   const handleFilesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -297,7 +302,7 @@ export function AiIntakeView() {
       const caseId = uuidv4();
       const caseItem: CaseItem = {
         id: caseId,
-        title: data.caseTitle || data.caseType || description.slice(0, 80) || 'New Case',
+        title: data.caseTitle || data.caseType || (description ? description.slice(0, 80) : 'New Case'),
         description: data.facts || description,
         caseType: data.caseType || 'Civil',
         subType: data.subType,
@@ -369,11 +374,7 @@ export function AiIntakeView() {
             let body: any = {
               documentType: doc.name,
               caseType: data.caseType,
-              details: {
-                ...data,
-                caseId,
-                clientId,
-              },
+              details: buildDetailsString(data, caseId, clientId),
               extractedText: fileContent || '',
             };
 
@@ -429,10 +430,62 @@ export function AiIntakeView() {
     setExtractedData((prev) => ({ ...prev, [key]: value }));
   };
 
+  // Build a formatted details string from ExtractedCaseData for the drafting API
+  const buildDetailsString = (data: ExtractedCaseData, caseId?: string, clientId?: string): string => {
+    const lines: string[] = [];
+    if (data.caseTitle) lines.push(`Case Title: ${data.caseTitle}`);
+    if (data.caseType) lines.push(`Case Type: ${data.caseType}${data.subType ? ` (${data.subType})` : ''}`);
+    if (data.clientName) lines.push(`Client Name: ${data.clientName}`);
+    if (data.clientPhone) lines.push(`Client Phone: ${data.clientPhone}`);
+    if (data.clientEmail) lines.push(`Client Email: ${data.clientEmail}`);
+    if (data.clientAddress) lines.push(`Client Address: ${data.clientAddress}`);
+    if (data.opposingParty) lines.push(`Opposing Party: ${data.opposingParty}`);
+    if (data.opposingPartyAddress) lines.push(`Opposing Party Address: ${data.opposingPartyAddress}`);
+    if (data.accusedName) lines.push(`Accused Name: ${data.accusedName}`);
+    if (data.accusedPhone) lines.push(`Accused Phone: ${data.accusedPhone}`);
+    if (data.accusedAddress) lines.push(`Accused Address: ${data.accusedAddress}`);
+    if (data.victimNames && data.victimNames.length > 0) lines.push(`Victims: ${data.victimNames.join(', ')}`);
+    if (data.sections && data.sections.length > 0) lines.push(`Relevant Sections: ${data.sections.join(', ')}`);
+    if (data.causeOfAction) lines.push(`Cause of Action: ${data.causeOfAction}`);
+    if (data.reliefSought) lines.push(`Relief Sought: ${data.reliefSought}`);
+    if (data.firNumber) lines.push(`FIR Number: ${data.firNumber}`);
+    if (data.policeStation) lines.push(`Police Station: ${data.policeStation}`);
+    if (data.courtName) lines.push(`Court: ${data.courtName}`);
+    if (data.jurisdiction) lines.push(`Jurisdiction: ${data.jurisdiction}`);
+    if (data.facts) lines.push(`Facts: ${data.facts}`);
+    if (caseId) lines.push(`Case ID: ${caseId}`);
+    if (clientId) lines.push(`Client ID: ${clientId}`);
+    return lines.join('\n');
+  };
+
   const handleViewDraft = (draft: GeneratedDraft) => {
     setViewerTitle(draft.name);
     setViewerContent(draft.content);
     setViewerOpen(true);
+  };
+
+  const handleEditDraft = (draft: GeneratedDraft, idx: number) => {
+    setEditDraftTitle(draft.name);
+    setEditDraftContent(draft.content);
+    setEditDraftIdx(idx);
+    setEditDraftOpen(true);
+  };
+
+  const handleSaveEditDraft = () => {
+    if (editDraftIdx < 0 || editDraftIdx >= drafts.length) return;
+    const updatedDraft = { ...drafts[editDraftIdx], content: editDraftContent };
+    const newDrafts = [...drafts];
+    newDrafts[editDraftIdx] = updatedDraft;
+    setDrafts(newDrafts);
+    // Also update in the data store (find by name + caseId)
+    const docName = `${updatedDraft.name} - ${new Date().toLocaleDateString('en-IN')}`;
+    const allDocs = useDataStore.getState().documents;
+    const matchingDoc = allDocs.find(d => d.name === docName && d.caseId === createdCaseId);
+    if (matchingDoc) {
+      updateDocument(matchingDoc.id, { content: editDraftContent });
+    }
+    setEditDraftOpen(false);
+    toast.success('Document updated');
   };
 
   const handleDownloadPDF = (draft: GeneratedDraft) => {
@@ -504,6 +557,37 @@ export function AiIntakeView() {
         title={viewerTitle}
         content={viewerContent}
       />
+
+      {/* Document Edit Modal */}
+      {editDraftOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditDraftOpen(false)}>
+          <div className="bg-background rounded-xl border shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Pencil className="h-4 w-4" />
+                Edit: {editDraftTitle}
+              </h3>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditDraftOpen(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <Textarea
+                value={editDraftContent}
+                onChange={(e) => setEditDraftContent(e.target.value)}
+                rows={25}
+                className="font-mono text-xs leading-relaxed resize-none"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t">
+              <Button variant="outline" onClick={() => setEditDraftOpen(false)}>Cancel</Button>
+              <Button onClick={handleSaveEditDraft} className="gap-2">
+                <CheckCircle className="h-4 w-4" /> Save Changes
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Autonomous Progress Bar */}
       {stage !== 'idle' && (
@@ -855,7 +939,7 @@ export function AiIntakeView() {
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleViewDraft(draft)} title="View">
                                     <Eye className="h-3.5 w-3.5" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleViewDraft(draft)} title="Edit">
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEditDraft(draft, idx)} title="Edit">
                                     <Pencil className="h-3.5 w-3.5" />
                                   </Button>
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDownloadPDF(draft)} title="PDF">

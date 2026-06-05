@@ -137,6 +137,17 @@ export const apiAiDraft = https.onRequest(
 
         // Build details from individual fields if `details` not provided
         let resolvedDetails = details || '';
+        // Handle case where details is an object (not a string)
+        if (resolvedDetails && typeof resolvedDetails === 'object') {
+          const objEntries = Object.entries(resolvedDetails)
+            .filter(([, v]) => v !== undefined && v !== null && v !== '')
+            .map(([k, v]) => {
+              const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+              const val = Array.isArray(v) ? v.join(', ') : String(v);
+              return `${label}: ${val}`;
+            });
+          resolvedDetails = objEntries.length > 0 ? objEntries.join('\n') : '';
+        }
         if (!resolvedDetails && Object.keys(fields).length > 0) {
           const fieldEntries = Object.entries(fields)
             .filter(([k, v]) => v && typeof v === 'string' && v.trim())
